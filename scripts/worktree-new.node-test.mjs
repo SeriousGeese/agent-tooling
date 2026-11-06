@@ -2331,7 +2331,11 @@ test('worktreeRoot and worktreeNamePattern from agent-tooling.json place and nam
     const dest = path.join(f.root, 'trees', 'nested', 'wt-cfg-primary');
     assert.ok(existsSync(dest), `expected the configured location and name:\n${stdout}`);
     // The printed commands come from worktreeScripts, with the PATH filled in.
-    assert.ok(toBashPath(stdout).includes(`bash scripts/worktree-new.sh --await ${toBashPath(dest)}`));
+    // Unconfigured, the await command names the script by absolute path so it pastes from anywhere.
+    assert.ok(
+      /bash "\/[^"]*scripts\/worktree-new\.sh" --await /.test(stdout) && stdout.includes(` --await ${toBashPath(dest)}`),
+      `expected an absolute-path await command:\n${stdout}`,
+    );
 
     // The environment variable still wins over the configured root.
     const elsewhere = path.join(f.root, 'env-wins');
@@ -2371,6 +2375,43 @@ test('a broken agent-tooling.json warns and the defaults apply, rather than fail
     assert.match(stderr, /WARNING: agent-tooling\.json is unusable, using the defaults/);
     assert.match(stderr, /unknown key "packageManger"/);
     assert.ok(existsSync(path.join(f.root, 'primary-typo')));
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
+test('a non-npm package manager prints a one-line degraded-support warning on install', async () => {
+  const f = fixture();
+  const target = path.join(f.root, 'target-degraded');
+  mkdirSync(target, { recursive: true });
+  writeFileSync(path.join(target, 'package.json'), '{"name":"x"}\n');
+  writeFileSync(path.join(target, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+  writeFileSync(path.join(f.primary, 'agent-tooling.json'), JSON.stringify({ packageManager: 'pnpm' }));
+  const binDir = path.join(f.root, 'pnpm-shim-warn');
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(path.join(binDir, 'pnpm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  try {
+    const { stderr } = await execFileAsync('bash', [script, '--install', toBashPath(target), '--wait'], {
+      cwd: f.primary,
+      encoding: 'utf8',
+      env: withBinFirst(ENV, binDir),
+    });
+    assert.match(stderr, /WARNING: packageManager 'pnpm' is only partly supported.*NOT rebuilt.*no version-drift check/);
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
+test('the --await Fix command names the script by absolute path', async () => {
+  const f = fixture();
+  const target = path.join(f.root, 'target-abs-fix');
+  mkdirSync(target, { recursive: true });
+  markInstalled(target, { binding: 'none' });
+  try {
+    await assert.rejects(run(f.primary, ['--await', toBashPath(target)], ENV), (err) => {
+      assert.match(err.stderr, /bash "\/[^"]*scripts\/worktree-new\.sh" --install /, err.stderr);
+      return true;
+    });
   } finally {
     removeTempDir(f.root, 'worktree-new.node-test');
   }

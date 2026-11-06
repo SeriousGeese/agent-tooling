@@ -188,6 +188,10 @@ CLAIM_AGE_RC=0
 bd show "$ISSUE_ID" --json 2>/dev/null | node "$NODE_SCRIPT_DIR/claim-age.mjs" "$ISSUE_ID" --actor "${BEADS_ACTOR:-}" || CLAIM_AGE_RC=$?
 if [[ "$CLAIM_AGE_RC" == "3" ]]; then
   exit 1
+elif [[ "$CLAIM_AGE_RC" != "0" ]]; then
+  # A crashed helper must not block every claim, so the claim goes ahead, but loudly: nobody
+  # checked whether another session holds this bead.
+  echo "WARNING: the fresh-claim check could not run (claim-age.mjs exited $CLAIM_AGE_RC). Claiming $ISSUE_ID UNVERIFIED: another session may hold it. Check 'bd show $ISSUE_ID' if in doubt." >&2
 fi
 
 # A bead parked back to `open` but still carrying its old assignee is unclaimable

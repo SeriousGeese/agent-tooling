@@ -37,9 +37,13 @@ const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const IS_WINDOWS = process.platform === 'win32';
 
 const has = (cmd) => spawnSync(cmd, ['--version'], { encoding: 'utf8' }).status === 0;
+// claim.sh syncs through bd-dolt-sync.mjs, which belongs to the beads set: a consumer that
+// vendored the worktree set alone has nothing for these tests to run against.
 const SKIP = !has('bash') || !has('git')
   ? 'requires bash and git on PATH'
-  : false;
+  : !fs.existsSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'bd-dolt-sync.mjs'))
+    ? 'scripts/bd-dolt-sync.mjs is absent: claim.sh needs the beads set (adopt --set beads,worktree)'
+    : false;
 let tmp, origin, checkout, stubBin;
 
 // What claim.sh runs against: itself, the worktree half, the 4h check, and (from the base and
@@ -386,4 +390,20 @@ test('a script from another set that is not vendored is named, with its set, bef
   assert.match(r.stderr, /the beads set/);
   assert.match(r.stderr, /--set asks,beads,worktree/);
   assert.ok(!fs.existsSync(log), 'bd must never run');
+});
+
+test('a crashed claim-age helper does not block the claim, but warns that it went unverified', { skip: SKIP }, () => {
+  const helper = path.join(checkout, 'scripts', 'claim-age.mjs');
+  const original = fs.readFileSync(helper);
+  fs.writeFileSync(helper, 'process.exitCode = 2;\n');
+  try {
+    const bin = showBin('crashed-helper', heldBy('bd-crash', 'other-bot-bbbbbbbb', 1));
+    const r = claim(['bd-crash', '--claim-only'], {}, bin.dir);
+    assert.equal(r.status, 0, `a broken helper must not block the claim:\n${r.stdout}\n${r.stderr}`);
+    assert.match(r.stderr, /fresh-claim check could not run \(claim-age\.mjs exited 2\)/);
+    assert.match(r.stderr, /UNVERIFIED/);
+    assert.ok(bin.calls().includes('update bd-crash --claim'), 'the claim still goes ahead');
+  } finally {
+    fs.writeFileSync(helper, original);
+  }
 });

@@ -48,13 +48,25 @@ config loader, the node:test runner and the actor id and test cleanup helpers th
 
 `worktree-new.sh`, `claim.sh`, `worktree-dev.sh` and `worktree-port.sh`, with their libs
 (`lib/agent-config.sh`, `lib/git-no-fsmonitor.sh`, `lib/to-node-path.sh`). Consumer values come from
-`agent-tooling.json`: `packageManager` (npm, pnpm or yarn), `worktreeRoot`, `worktreeNamePattern`
+`agent-tooling.json`: `packageManager` (npm, pnpm, yarn or bun; see below), `worktreeRoot`, `worktreeNamePattern`
 (`<repo>`, `<slug>`), `worktreeScripts` (the commands printed in hints) and `claimHelper`.
+
+**Package managers.** npm is fully supported. pnpm, yarn (classic only: berry rejects
+`--frozen-lockfile --ignore-scripts`) and bun install, with these gaps, and a one-line warning is
+printed when one of them installs: dependencies whose install scripts were skipped are NOT rebuilt
+(npm rebuilds the ones that need it), there is no lockfile-versus-installed version-drift check, and
+staleness is the lockfile's mtime against the manager's record file (for bun that record is
+`node_modules` itself, a directory mtime, so it is weak).
+
+**Printed commands.** The `--install` fix commands and the `--await` hint name `worktree-new.sh` by
+absolute path, so they work pasted from any directory, unless `worktreeScripts` overrides them.
 
 **Runtime dependencies outside this set.** claim.sh needs `agent-actor-id.mjs` (base, always
 present), `bd-dolt-sync.mjs` (the `beads` set) and the `bd` CLI. Without the beads set it refuses
 before touching `bd`, naming the missing file and the set that ships it, so adopt
-`--set beads,worktree` together. The creation scripts need only git, bash and node; every config
+`--set beads,worktree` together. Likewise `claim-worktree-first.node-test.mjs` skips itself, with that
+reason, when `bd-dolt-sync.mjs` is absent. If `claim-age.mjs` crashes (any exit other than its refusal code 3),
+the claim proceeds and a stderr warning says the fresh-claim check did not run. The creation scripts need only git, bash and node; every config
 read degrades to the defaults when `node` or the config module is absent.
 
 **Consumer hint file.** Facts about a consumer's dependency tree live in the consumer-owned,

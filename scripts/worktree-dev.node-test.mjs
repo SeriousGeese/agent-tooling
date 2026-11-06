@@ -361,7 +361,7 @@ test('a server started by `worktree-dev.sh start` descends from its registry pid
 test('`worktree-dev.sh stop` ends the whole tree `start` began: the launcher and server.js do not survive', async (t) => {
   // The recorded pid is `npm run dev`, which is not a process-group leader, so `kill -- -<pid>`
   // never worked and the old fallback reached npm alone: the server below it kept the port and
-  // data/development.db open. The stub chain is deliberately deeper than one hop.
+  // its data file open. The stub chain is deliberately deeper than one hop.
   const { bash, sandbox, binDir, launcher, server } = await startStubChain(t);
   assert.ok(isRunning(server) && isRunning(launcher), 'the chain is up before stop');
   assert.match(fs.readFileSync(sandbox.registry, 'utf8').trimEnd().split('\t')[3] ?? '', /^(st|ps):\S+$/,

@@ -111,6 +111,15 @@ git_disable_fsmonitor
 # shellcheck source=lib/agent-config.sh
 source "$SCRIPT_DIR/lib/agent-config.sh"
 agent_config_load
+# The await and install commands this script prints must work when pasted from ANY directory
+# (an agent is often inside the worktree by then), so unless the repository configured its own
+# wrapper they name this script by absolute path.
+if [ "$AGENT_CFG_CMD_AWAIT" = "bash scripts/worktree-new.sh --await <path>" ]; then
+  AGENT_CFG_CMD_AWAIT="bash \"$SCRIPT_DIR/worktree-new.sh\" --await <path>"
+fi
+if [ "$AGENT_CFG_CMD_INSTALL" = "bash scripts/worktree-new.sh --install <path>" ]; then
+  AGENT_CFG_CMD_INSTALL="bash \"$SCRIPT_DIR/worktree-new.sh\" --install <path>"
+fi
 # No `exit` in the awk body: an early exit closes
 # the pipe, git dies of SIGPIPE, and pipefail makes that a fatal 141 on any machine with
 # enough worktrees for git to still be writing.
@@ -158,12 +167,21 @@ pm_install() {
     bun)  bun install --frozen-lockfile --ignore-scripts ;;
   esac
 }
-pm_rebuild() {
-  case "$PM" in
-    npm)  npm rebuild "$@" ;;
-    pnpm) pnpm rebuild "$@" ;;
-    *)    return 0 ;; # yarn and bun have no by-name rebuild; their native packages ship prebuilds
-  esac
+# Only npm has a targeted rebuild: rebuildable_packages names nothing for any other manager, so
+# this is never reached for them. Their install scripts stay skipped (see degraded_pm_notice).
+pm_rebuild() { npm rebuild "$@"; }
+
+# What a non-npm manager does NOT get, said once per install, because the support is thinner
+# than the table above suggests: npm is fully supported; the others install and nothing more.
+#   - no rebuild of the dependencies whose install scripts were skipped by --ignore-scripts
+#     (npm rebuilds the ones that need it; here a package that compiles on install is not built);
+#   - no lockfile-vs-installed version-drift check (it reads npm's own record);
+#   - a staleness check that compares the lockfile's mtime with the manager's record file
+#     (for bun that record is node_modules itself, so it is only a directory mtime);
+#   - yarn means yarn classic: yarn berry rejects --frozen-lockfile and --ignore-scripts.
+degraded_pm_notice() {
+  [ "$PM" = "npm" ] && return 0
+  echo "WARNING: packageManager '$PM' is only partly supported: dependencies are installed with install scripts skipped and NOT rebuilt, and the staleness check is weaker (no version-drift check). npm is the fully supported manager." >&2
 }
 pm_run_script() { "$PM" run "$1"; }
 
@@ -1099,6 +1117,7 @@ run_install() {
 
 install_deps() {
   DEST="$1"; AWAIT_ARG="$2"
+  degraded_pm_notice
   LOG="$DEST/.npm-install.log"
   if [ "$WAIT" = "1" ]; then
     echo "Installing dependencies ($PM_LABEL)…"
@@ -1142,6 +1161,7 @@ fi
 # forgot got failures that look like real breakage, because the worktree resolves the
 # PRIMARY's node_modules through npm's lockfile-root heuristic.
 if [ "$PROVISION" = "1" ]; then
+  degraded_pm_notice
   [ -n "$SLUG" ] || { echo "Usage: scripts/worktree-new.sh --install <path>" >&2; exit 1; }
   PV="$(resolve_dest "$SLUG")"
   [ -d "$PV" ] || { echo "ERROR: $PV is not a directory." >&2; exit 1; }

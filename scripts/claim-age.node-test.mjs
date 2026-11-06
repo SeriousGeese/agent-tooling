@@ -6,12 +6,12 @@ import { BLOCKED_EXIT, decide, formatAge, main, parseIssue, positiveNumber } fro
 
 const NOW = Date.parse('2026-08-22T01:54:42Z');
 const minutesAgo = (m) => new Date(NOW - m * 60_000).toISOString();
-const claim = (over = {}) => ({ assignee: 'Captain Goose', status: 'in_progress', started_at: minutesAgo(17), ...over });
+const claim = (over = {}) => ({ assignee: 'Holder Agent', status: 'in_progress', started_at: minutesAgo(17), ...over });
 
 test('blocks the 2026-08-22 collision: a 17-minute-old claim by another actor', () => {
-  const v = decide({ issue: claim(), me: 'Strickdd Bot', now: NOW });
+  const v = decide({ issue: claim(), me: 'Claimer Bot', now: NOW });
   assert.equal(v.blocked, true);
-  assert.equal(v.holder, 'Captain Goose');
+  assert.equal(v.holder, 'Holder Agent');
   assert.equal(formatAge(v.ageHours), '17 minutes');
 });
 
@@ -27,18 +27,18 @@ test('a custom window is honoured in both directions', () => {
 });
 
 test('your own claim is never blocked, ignoring case and surrounding whitespace', () => {
-  assert.equal(decide({ issue: claim(), me: 'Captain Goose', now: NOW }).blocked, false);
-  assert.equal(decide({ issue: claim({ assignee: '  captain goose ' }), me: 'Captain Goose', now: NOW }).blocked, false);
+  assert.equal(decide({ issue: claim(), me: 'Holder Agent', now: NOW }).blocked, false);
+  assert.equal(decide({ issue: claim({ assignee: '  holder agent ' }), me: 'Holder Agent', now: NOW }).blocked, false);
 });
 
 test('two sessions of one person with distinct ids collide; the same session does not', () => {
-  const issue = claim({ assignee: 'captain-goose-bot-aaaaaaaa' });
-  assert.equal(decide({ issue, me: 'captain-goose-bot-bbbbbbbb', meBase: 'captain-goose', now: NOW }).blocked, true);
-  assert.equal(decide({ issue, me: 'captain-goose-bot-aaaaaaaa', meBase: 'captain-goose', now: NOW }).blocked, false);
+  const issue = claim({ assignee: 'holder-agent-bot-aaaaaaaa' });
+  assert.equal(decide({ issue, me: 'holder-agent-bot-bbbbbbbb', meBase: 'holder-agent', now: NOW }).blocked, true);
+  assert.equal(decide({ issue, me: 'holder-agent-bot-aaaaaaaa', meBase: 'holder-agent', now: NOW }).blocked, false);
 });
 
 test('a bare team-name claim from before per-session ids is treated as possibly ours', () => {
-  assert.equal(decide({ issue: claim(), me: 'captain-goose-bot-bbbbbbbb', meBase: 'Captain Goose', now: NOW }).blocked, false);
+  assert.equal(decide({ issue: claim(), me: 'holder-agent-bot-bbbbbbbb', meBase: 'Holder Agent', now: NOW }).blocked, false);
 });
 
 test('every uncertain case fails open', () => {
@@ -54,7 +54,7 @@ test('every uncertain case fails open', () => {
 });
 
 test('the camelCase startedAt spelling is read too', () => {
-  const issue = { assignee: 'Captain Goose', status: 'in_progress', startedAt: minutesAgo(5) };
+  const issue = { assignee: 'Holder Agent', status: 'in_progress', startedAt: minutesAgo(5) };
   assert.equal(decide({ issue, me: 'Other', now: NOW }).blocked, true);
 });
 
