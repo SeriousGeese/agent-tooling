@@ -8,10 +8,10 @@ before any git-mutating command, and remove only worktrees that are provably you
 rule below exists because the cheaper shortcut failed in a way that was hard to see. Read the
 section when a rule looks like ceremony, or when recovering from a broken worktree.
 
-Scripts named here ship in these places: `claim.sh`, `worktree-new.sh`, `worktree-rm.sh`, `land.sh`
-and `session-lock.mjs` in the `worktree` set; `bd-dolt-sync.mjs` in the `beads` set; `gate.sh` in the
-`gate` set; `agent-actor-id.mjs` in base, which every consumer gets. `repair-hookspath.mjs` is not shipped
-yet (the `session` set is empty), so a consumer carries its own. Hatch variables carry the repository's env prefix (`envPrefix` in
+Scripts named here ship in these places: `claim.sh`, `worktree-new.sh`, `worktree-rm.sh` and `land.sh`
+in the `worktree` set; `bd-dolt-sync.mjs` in the `beads` set; `gate.sh` in the `gate` set;
+`repair-hookspath.mjs` in the `session` set; `agent-actor-id.mjs` and `session-lock.mjs` in base, which
+every consumer gets. Hatch variables carry the repository's env prefix (`envPrefix` in
 `agent-tooling.json`). The Dolt side
 of the same ritual (sync, locks, conflicts) is in [beads-sync.md](beads-sync.md).
 
@@ -600,7 +600,7 @@ node scripts/repair-hookspath.mjs                   # repair both scopes; silent
 ```
 
 The repair clears every per-worktree override first (the scope that wins), then sets
-`--local core.hookspath <tracked hooks dir>`, and is silent and non-writing on a healthy machine.
+`--local core.hookspath <tracked hooks dir>` (`AGENT_TOOLING_HOOKS_PATH`, default `.beads/hooks`), and is silent and non-writing on a healthy machine.
 The desired value is deliberately the **relative** path: git resolves a relative `core.hooksPath`
 against the top level of the working tree, so the relative form is correct in the primary checkout
 and in every linked worktree at once, while an absolute path is right in at most one of them (so one

@@ -13,6 +13,7 @@
     "scripts/parse-flags.node-test.mjs",
     "scripts/run-node-tests.mjs",
     "scripts/run-node-tests.node-test.mjs",
+    "scripts/session-lock.mjs",
     "scripts/test-preflight.mjs",
     "scripts/test-preflight.node-test.mjs",
     "scripts/test-support/async-failure-diagnostics.mjs",
@@ -75,7 +76,6 @@
       "scripts/lib/to-node-path-probe.mjs",
       "scripts/lib/to-node-path.sh",
       "scripts/lib/windows-powershell-env.mjs",
-      "scripts/session-lock.mjs",
       "scripts/session-lock.node-test.mjs",
       "scripts/test-support/git-fixture-template.mjs",
       "scripts/test-support/short-path.mjs",
@@ -107,7 +107,16 @@
       "scripts/pr-queue-state.mjs",
       "scripts/pr-queue-state.node-test.mjs"
     ],
-    "session": [],
+    "session": [
+      "scripts/lib/prom-text.mjs",
+      "scripts/prom-text.node-test.mjs",
+      "scripts/repair-hookspath.mjs",
+      "scripts/repair-hookspath.node-test.mjs",
+      "scripts/session-phase.mjs",
+      "scripts/session-phase.node-test.mjs",
+      "scripts/session-tracker.mjs",
+      "scripts/session-tracker.node-test.mjs"
+    ],
     "skills": [
       ".agents/skills/bead-chains/SKILL.md",
       ".agents/skills/bead-workflow/SKILL.md",
