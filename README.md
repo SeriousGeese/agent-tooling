@@ -27,7 +27,7 @@ consumer at a pinned commit, at the same paths they have here, by
 ## Sets
 
 `manifest.json` lists every vendored file. `base` ships to every consumer (this sync, the
-config loader, the node:test runner and the actor id and test cleanup helpers the sets share). Everything else is in a named set, chosen with
+config loader, the node:test runner, `session-lock.mjs` and the actor id and test cleanup helpers the sets share). Everything else is in a named set, chosen with
 `--set`:
 
 | Set | Contents |
@@ -37,16 +37,39 @@ config loader, the node:test runner and the actor id and test cleanup helpers th
 | `hygiene` | Epic hygiene, idea inbox, tooling-friction log |
 | `worktree` | claim.sh and its fresh-claim guard (claim-age), worktree creation with `--await`, the per-worktree dev server and port, safe removal with the `--stale` scan (worktree-rm), session locks, and land.sh. See [The worktree set](#the-worktree-set) |
 | `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata (and the parse-flags and gh-rate-limit helpers they import). Knobs: `AGENT_TOOLING_PR_WORKFLOW`, `AGENT_TOOLING_GATE_CHECK`, `pr-metadata --migrations-dir` |
-| `session` | Session phase and tracker, hooksPath repair |
+| `session` | The session phase hook, the session tracker (a per-session step timeline, optionally a Prometheus textfile), and `core.hooksPath` repair. See [The session set](#the-session-set) |
 | `skills` | Process skills under `.agents/skills/`: `bead-workflow` (with its `agents/openai.yaml`), `beads-bulk`, `beads-hygiene`, `prompt-next-work`, `bead-chains`, `mvp-readiness`, `recurring-task`, `window-review`, `dependabot-handler`. (`ask-review` ships in `asks`, with the script it drives.) Each may read a consumer-owned `LOCAL.md`, see Skill overlays |
 | `docs` | The generic halves of the agent docs under `docs/agents/shared/` |
 | `ritual` | The agent-ritual conformance smoke |
 
 `all` is every set; `none` is `base` alone. A set may be empty until its files move here.
 
+## The session set
+
+`session-phase.mjs` (a hook that appends one line per milestone an agent session reaches), `session-tracker.mjs`
+(the viewer: one block per session with each step's wall time, what it is running now, how long it sat waiting on
+you, and its slowest step; `--all`, `--since`, `--watch`, `--json`, `--prom-dir`), and `repair-hookspath.mjs` (detects and
+repairs `core.hooksPath` drift, including per-worktree overrides, so the repo's chained hooks run). Plus
+`lib/prom-text.mjs`, the two Prometheus helpers the tracker needs.
+
+**Dependency on session-lock.** The phase hook and the tracker find the checkout and the caller's session id through
+`session-lock.mjs`, which the worktree set also uses. A set may import only `base` and itself, so `session-lock.mjs` is in
+`base` (it needs only node builtins) and both sets use it; `session-lock.node-test.mjs` stays in the worktree set
+because it needs that set's test fixtures. `--set session` therefore works on its own.
+
+**Wiring.** Register `node scripts/session-phase.mjs record` as a hook for SessionStart, UserPromptSubmit, PreToolUse
+and PostToolUse (shell and edit tools), PostToolUseFailure, Stop, SubagentStop and SessionEnd. It always exits 0 and
+logs to `<git common dir>/<prefix>-session-phases/`, where `<prefix>` is the consumer's lower-cased `envPrefix` (the
+neutral token `AGENT_TOOLING_SESSION_PHASES` is rewritten on sync, as `session-lock.mjs`'s directory name is).
+
+**Consumer values.** `beadPrefix` in `agent-tooling.json` decides which branches count as a bead session (`<prefix>-<id>`);
+with none set, only a session that reached a bead step (claim, commit, push, PR, ...) is drawn with the step list. The
+step matchers name the vendored scripts (`claim.sh`, `gate.sh`, `land.sh`, `worktree-rm.sh`, ...) and common gate commands.
+Knob: `AGENT_TOOLING_HOOKS_PATH` (repair-hookspath's wanted `core.hooksPath`, default `.beads/hooks`).
+
 ## The worktree set
 
-`worktree-new.sh`, `claim.sh`, `worktree-dev.sh`, `worktree-port.sh`, `worktree-rm.sh`, `session-lock.mjs` and `land.sh`, with their libs
+`worktree-new.sh`, `claim.sh`, `worktree-dev.sh`, `worktree-port.sh`, `worktree-rm.sh` and `land.sh` (plus `session-lock.mjs`, which lives in `base`; see [The session set](#the-session-set)), with their libs
 (`lib/agent-config.sh`, `lib/git-no-fsmonitor.sh`, `lib/to-node-path.sh`). Consumer values come from
 `agent-tooling.json`: `packageManager` (npm, pnpm, yarn or bun; see below), `worktreeRoot`, `worktreeNamePattern`
 (`<repo>`, `<slug>`), `worktreeScripts` (the commands printed in hints) and `claimHelper`.
@@ -93,7 +116,7 @@ bead ids use `beadPrefix` from `agent-tooling.json`. Knobs: `AGENT_TOOLING_CLOSE
 `beads` set (`bd-dolt-sync.mjs`). It checks for them before waiting on anything and names the missing file and
 the set that ships it, so adopt `--set beads,gate,worktree` together. `land.node-test.mjs` skips, with that
 reason, the cases that need the gate files; a parity test checks that land.sh's copy of the rate-limit pattern
-equals `lib/gh-rate-limit.mjs`. `worktree-rm.sh` and `session-lock.mjs` need only this set.
+equals `lib/gh-rate-limit.mjs`. `worktree-rm.sh` needs only this set and `session-lock.mjs` (base).
 
 **Consumer hint file.** Facts about a consumer's dependency tree live in the consumer-owned,
 never-synced `scripts/worktree-new.hint.sh` (or the file named by `WORKTREE_NEW_HINT_FILE`):
