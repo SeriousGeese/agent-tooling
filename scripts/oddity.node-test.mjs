@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, cpSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync } from 'node:fs';
+import { appendFileSync, cpSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync } from 'node:fs';
 import { removeTempDir } from './test-support/hygiene-temp-dir.mjs';
 import { tryLoadConfig } from './agent-tooling-config.mjs';
 import { tmpdir } from 'node:os';
