@@ -17,6 +17,7 @@ import {
   RETENTION_MS,
   SHELL_CAP_MS,
   beadBranchPattern,
+  configWarning,
   hitShellCap,
   SESSION_PROM_FILE,
   SESSION_PROM_HEADER,
@@ -611,4 +612,34 @@ test('writeSessionProm replaces a symlink at the destination, never writing thro
   assert.equal(fs.readFileSync(target, 'utf8'), `${SESSION_PROM_HEADER}x\n`, 'the link target is untouched');
   assert.ok(!fs.lstatSync(file).isSymbolicLink(), 'the destination is now a regular file');
   assertExposition(fs.readFileSync(file, 'utf8'));
+});
+
+test('configWarning is empty for a good config and names the reason for a broken one', () => {
+  assert.equal(configWarning({ config: {}, error: null }), '');
+  assert.equal(configWarning(undefined), '');
+  assert.equal(
+    configWarning({ config: {}, error: 'agent-tooling.json: not valid JSON' }),
+    '[session-tracker] agent-tooling.json could not be loaded (agent-tooling.json: not valid JSON); branch-based bead detection is off\n',
+  );
+});
+
+test('the CLI prints the config warning once on stderr; a good config is silent', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'session-tracker-cfg-'));
+  roots.add(root);
+  fs.mkdirSync(path.join(root, '.git'));
+  fs.mkdirSync(path.join(root, 'scripts', 'lib'), { recursive: true });
+  const here = import.meta.dirname;
+  for (const f of ['session-tracker.mjs', 'session-phase.mjs', 'session-lock.mjs', 'agent-tooling-config.mjs', 'lib/prom-text.mjs']) {
+    fs.copyFileSync(path.join(here, f), path.join(root, 'scripts', f));
+  }
+  const run = () => spawnSync(process.execPath, [path.join(root, 'scripts', 'session-tracker.mjs')], { cwd: root, encoding: 'utf8' });
+  assert.equal(run().stderr, '', 'no config file is not an error');
+  fs.writeFileSync(path.join(root, 'agent-tooling.json'), '{ not json');
+  const bad = run();
+  assert.equal(bad.status, 0);
+  assert.equal(bad.stderr.split('\n').filter((l) => l.includes('could not be loaded')).length, 1);
+  assert.match(bad.stderr, /^\[session-tracker\] agent-tooling\.json could not be loaded \(.*not valid JSON.*\); branch-based bead detection is off$/m);
+  fs.writeFileSync(path.join(root, 'agent-tooling.json'), '{}');
+  assert.equal(run().stderr, '');
 });

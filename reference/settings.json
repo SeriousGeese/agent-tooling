@@ -1,5 +1,5 @@
 {
-  "$comment": "Reference Claude Code hook wiring for a repository that vendors both homes: SeriousGeese/CICD agent-hooks (scripts/hooks/, CICD-HOOKS-SHA) and SeriousGeese/agent-tooling (scripts/, AGENT-TOOLING-SHA). Copy the parts for the sets you vendored into .claude/settings.json. Every command resolves the session's own checkout, so a linked worktree runs its own copies. Consumer values (the hatch prefix, script paths, worktree naming) come from agent-tooling.json, not from here. The three worktree SessionStart hooks run in ONE command on purpose: SessionStart hooks run concurrently, and two index-mutating hooks in parallel can leave files deleted. Git pre-push wiring is in reference/pre-push. block-masked-gates reads its gate-wrapper list from the <PREFIX>GATE_WRAPPERS env var (set it under \"env\", e.g. \"gate.sh, run-node-tests.mjs\"); keep agent-tooling.json gateWrappers the same.",
+  "$comment": "Reference Claude Code hook wiring for a repository that vendors both homes: SeriousGeese/CICD agent-hooks (scripts/hooks/, CICD-HOOKS-SHA) and SeriousGeese/agent-tooling (scripts/, AGENT-TOOLING-SHA). Copy the parts for the sets you vendored into .claude/settings.json. Every command resolves the session's own checkout, so a linked worktree runs its own copies. Consumer values (the hatch prefix, script paths, worktree naming) come from agent-tooling.json, not from here. The three worktree SessionStart hooks run in ONE command on purpose: SessionStart hooks run concurrently, and two index-mutating hooks in parallel can leave files deleted. The session set's phase hook (session-phase.mjs record) is wired on every event it logs, so session-tracker.mjs can show each session's steps; it always exits 0. Git pre-push wiring is in reference/pre-push. block-masked-gates reads its gate-wrapper list from the <PREFIX>GATE_WRAPPERS env var (set it under \"env\", e.g. \"gate.sh, run-node-tests.mjs\"); keep agent-tooling.json gateWrappers the same.",
   "hooks": {
     "SessionStart": [
       {
@@ -29,6 +29,10 @@
           {
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-lock.mjs\" touch"
+          },
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-phase.mjs\" record 2>/dev/null || true"
           }
         ]
       }
@@ -40,7 +44,51 @@
           {
             "type": "command",
             "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-lock.mjs\" touch"
+          },
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-phase.mjs\" record 2>/dev/null || true"
           }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-phase.mjs\" record 2>/dev/null || true" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-phase.mjs\" record 2>/dev/null || true" }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-phase.mjs\" record 2>/dev/null || true" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-phase.mjs\" record 2>/dev/null || true" }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-phase.mjs\" record 2>/dev/null || true" }
         ]
       }
     ],
@@ -65,7 +113,8 @@
         "hooks": [
           { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-masked-gates.mjs\"" },
           { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-uncommitted-restore.mjs\"" },
-          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-npx-unlisted.mjs\"" }
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-npx-unlisted.mjs\"" },
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-phase.mjs\" record 2>/dev/null || true" }
         ]
       },
       {

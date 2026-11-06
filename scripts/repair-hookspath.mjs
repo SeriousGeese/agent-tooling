@@ -24,14 +24,14 @@
 //     file for a lowercase `hookspath`; that returns a clean false negative. Ask git.
 //   - a RELATIVE `core.hooksPath` is resolved against the top level of the working tree, so the
 //     relative `.beads/hooks` is correct in the primary checkout AND in every linked worktree.
-//     An absolute path is not portable the same way, a worktree that later moves takes its
-//     absolute override with it, pointing nowhere, so drift detection still prefers and repairs
+//     An absolute path is not portable the same way: a worktree that later moves takes its
+//     absolute override with it, pointing nowhere. So drift detection still prefers and repairs
 //     TOWARD the relative form.
 //
-// that preference must not become a FALSE POSITIVE. `--check` reported drift across
+// That preference must not become a FALSE POSITIVE. `--check` reported drift across
 // 14 worktrees (12 belonging to other sessions) and claimed the chained hooks were NOT running,
 // when the effective `pre-push` hook was byte-identical to the primary's `.beads/hooks/pre-push`
-// and did chain `git lfs pre-push`, every one of those overrides was an ABSOLUTE path pointing
+// and did chain `git lfs pre-push`. Every one of those overrides was an ABSOLUTE path pointing
 // at the primary checkout's `.beads/hooks`, which RESOLVES correctly and SERVES the right files.
 // The bug was `sameHooksPath` alone: it compares the configured value to the literal string
 // `.beads/hooks` with no path resolution at all, so ANY absolute value fails that comparison
@@ -319,7 +319,7 @@ function main(argv) {
     return 1;
   }
 
-  // Never THROW out of here. a setup script runs under `set -euo pipefail` and calls this script,
+  // Never THROW out of here. A setup script runs under `set -euo pipefail` and calls this script,
   // so a non-zero exit aborts first-time setup partway through, before `beads.role`, the
   // DoltHub remote and the issue sync, leaving a half-configured machine that is harder to
   // diagnose than the drift this repairs. A failing `git config` write is not hypothetical

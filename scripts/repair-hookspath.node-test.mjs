@@ -23,7 +23,10 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { removeTempDir } from './test-support/cleanup.mjs';
-import {
+// DESIRED_HOOKS_PATH is read from the environment when the module loads, so clear the knob first:
+// these tests assert the default `.beads/hooks` and must not break for a developer who has it set.
+delete process.env.AGENT_TOOLING_HOOKS_PATH;
+const {
   DESIRED_HOOKS_PATH,
   inspectHooksPath,
   repairHooksPath,
@@ -33,7 +36,7 @@ import {
   resolveHooksPathAbs,
   hooksDirsEquivalent,
   hooksPathResolvesToDesired,
-} from './repair-hookspath.mjs';
+} = await import('./repair-hookspath.mjs');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, 'repair-hookspath.mjs');
@@ -304,10 +307,10 @@ test('duplicate local entries collapse to exactly one', () => {
 });
 
 test('an absolute LOCAL value that resolves to this repo\'s own .beads/hooks is healthy, not rewritten', () => {
-  // Superseded by this used to assert the OPPOSITE (still flagged unhealthy and
+  // This used to assert the OPPOSITE (still flagged unhealthy and
   // normalised to relative on every repair pass) purely because the value was not spelled
   // `.beads/hooks` literally, even though it named exactly the right directory. That is the
-  // same class of false positive the bead fixes for per-worktree overrides, applied here to the
+  // same class of false positive fixed for per-worktree overrides, applied here to the
   // local scope: `sameHooksPath` never resolves a path, so ANY absolute spelling failed the
   // literal comparison regardless of where it pointed. It is still true that an absolute value is
   // less portable than the relative form (a moved checkout takes a stale absolute value with it),
@@ -535,7 +538,7 @@ test('repairHooksPath still THROWS on a failed write, library callers keep the h
 });
 
 test('the CLI fails OPEN: it never exits non-zero in repair mode, so a setup script completes', () => {
-  // a setup script runs `set -euo pipefail` and calls this script. A non-zero exit there aborts
+  // A setup script runs `set -euo pipefail` and calls this script. A non-zero exit there aborts
   // first-time setup BEFORE beads.role, the DoltHub remote and the issue sync, leaving a
   // half-configured machine that is harder to diagnose than the drift being repaired. A failing
   // `git config` write is not hypothetical on this repo's Windows box, where concurrent sessions

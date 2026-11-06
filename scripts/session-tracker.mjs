@@ -11,16 +11,16 @@
 //   node scripts/session-tracker.mjs --json          the timelines, for a script or a dashboard
 //   node scripts/session-tracker.mjs --prom-dir <d>  also write <d>/agent_sessions_<writer>.prom for node_exporter
 //
-// Grafana: `--prom-dir` writes the node_exporter textfile behind the CI - Agent
-// sessions dashboard. The jobs dashboard's 5-minute refresh writes it too, into its own --prom-dir,
-// so a host that already reports scheduled jobs reports its sessions with no new task.
+// Metrics: `--prom-dir` writes the node_exporter textfile behind an agent-sessions dashboard. A
+// consumer's own periodic dashboard refresh can write it too, into its own --prom-dir, so a host
+// that already exports other metrics reports its sessions with no new task.
 //
 // A step's time runs from the first event that entered it to the first event of the next step,
 // minus the time the session was stopped waiting on you, which is reported separately. A session
 // that goes back to an earlier step (gates fail, back to coding) adds to that step's total.
 // Logs older than RETENTION_MS are deleted when the tracker reads them.
 import { randomBytes } from 'node:crypto';
-import fs from 'node:fs';
+import fs, { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tryLoadConfig } from './agent-tooling-config.mjs';
@@ -134,6 +134,11 @@ export function scheduledTaskName(prompt) {
 export function beadBranchPattern(prefix) {
   const p = String(prefix ?? '').replace(/[^A-Za-z0-9]/g, '');
   return p ? new RegExp(`\\b${p}-[a-z0-9]{4,}`, 'i') : null;
+}
+
+/** The one-line warning for a config that could not be loaded, or '' when it loaded. Printed by the CLI only; the hook path stays silent. */
+export function configWarning(loaded) {
+  return loaded?.error ? `[session-tracker] agent-tooling.json could not be loaded (${loaded.error}); branch-based bead detection is off\n` : '';
 }
 
 let configuredBeadPrefix;
@@ -416,7 +421,7 @@ export function quantile(sorted, q) {
 }
 
 /**
- * The node_exporter textfile for the CI - Agent sessions dashboard. Live series carry a short
+ * The node_exporter textfile for an agent-sessions metrics dashboard. Live series carry a short
  * session id (8 characters, plus the subagent's), the branch and the title (capped), so a
  * series' size stays bounded; the summary has only `step` and `quantile`, so its cardinality is
  * fixed. No host label: Prometheus adds the scrape target's `instance`. Every series carries
@@ -508,7 +513,7 @@ function headOf(file) {
 /**
  * Write `<promDir>/agent_sessions_<writer>.prom` from the logs under `commonDir`, atomically: a fresh
  * O_EXCL temp file (ending .tmp, which the textfile collector ignores) renamed into place, as
- * jobs-dashboard.mjs's writeAtomic does. Returns the file written.
+ * any atomic textfile writer does. Returns the file written.
  */
 export function writeSessionProm(promDir, { commonDir, now = Date.now() }) {
   if (!fs.existsSync(promDir)) throw new Error(`--prom-dir ${promDir} does not exist (node_exporter's --collector.textfile.directory)`);
@@ -529,7 +534,7 @@ export function writeSessionProm(promDir, { commonDir, now = Date.now() }) {
     fs.rmSync(tmp, { force: true });
     throw err;
   }
-  // The shared earlier shared name would keep serving frozen sessions beside the new file.
+  // The name every writer shared earlier would keep serving frozen sessions beside the new file.
   const legacy = path.join(path.dirname(file), LEGACY_SESSION_PROM_FILE);
   const legacyHead = headOf(legacy);
   if (legacyHead !== null && !sessionPromProblem(legacy, legacyHead)) fs.rmSync(legacy, { force: true });
@@ -594,6 +599,8 @@ function main(argv) {
     process.stderr.write(`session-tracker: ${e.message}\n`);
     return 2;
   }
+  const warning = configWarning(tryLoadConfig());
+  if (warning) process.stderr.write(warning);
   const co = findCheckout(process.cwd());
   if (!co) {
     process.stderr.write('session-tracker: run it from inside a checkout of this repo\n');
@@ -630,7 +637,7 @@ function main(argv) {
 /** True when this file is the script node was started on. Both sides go through realpath, so a symlinked or 8.3-short-named path still matches. */
 function isEntryPoint() {
   try {
-    return Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
   } catch {
     return false;
   }

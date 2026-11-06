@@ -14,7 +14,7 @@
 // whole pre-push hook, which is the usual answer to "why is this session slow".
 // The log lives in the COMMON git dir, like session-lock.mjs's records, so the viewer run from any
 // checkout sees every worktree's sessions.
-import fs from 'node:fs';
+import fs, { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callerSessionId, findCheckout } from './session-lock.mjs';
@@ -35,6 +35,8 @@ function GIT_SUBCOMMAND(sub) {
  * The pizza-tracker steps, in the order a bead normally walks them. `diagnose` has no matcher:
  * it is the time from the session's start to its first other step.
  */
+// The `gates` matcher includes verify-local.sh and verify.mjs as common gate wrapper names; they are
+// harmless where those scripts do not exist.
 export const PHASES = [
   { id: 'diagnose', label: 'diagnose' },
   { id: 'claim', label: 'claim', match: /\b(claim\.sh|worktree-new\.sh)\b/ },
@@ -175,7 +177,7 @@ function main(argv) {
 /** True when this file is the script node was started on. Both sides go through realpath, so a symlinked or 8.3-short-named path still matches. */
 function isEntryPoint() {
   try {
-    return Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
   } catch {
     return false;
   }
