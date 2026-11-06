@@ -1,7 +1,7 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -231,7 +231,9 @@ describe('check from a linked worktree', () => {
   const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
   function fixture({ embedded = true } = {}) {
-    const base = mkdtempSync(path.join(tmpdir(), 'check-beads-remote-wt-'));
+    // The long-name spelling: on a Windows runner tmpdir() is 8.3 (RUNNER~1) while git reports
+    // the long form, so a path from git would never equal one built from tmpdir().
+    const base = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'check-beads-remote-wt-')));
     const primary = path.join(base, 'primary');
     const linked = path.join(base, 'linked');
     mkdirSync(path.join(primary, '.beads'), { recursive: true });
