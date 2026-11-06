@@ -38,7 +38,7 @@ config loader, the node:test runner, the actor id and test cleanup helpers, and 
 | `worktree` | claim.sh and its fresh-claim guard (claim-age), worktree creation with `--await`, the per-worktree dev server and port, safe removal with the `--stale` scan (worktree-rm), session locks, and land.sh. See [The worktree set](#the-worktree-set) |
 | `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata (and the gh-rate-limit helper they import; `parse-flags` is in base). Knobs: `AGENT_TOOLING_PR_WORKFLOW`, `AGENT_TOOLING_GATE_CHECK`, `pr-metadata --migrations-dir` |
 | `session` | Session phase and tracker, hooksPath repair |
-| `skills` | Process skills under `.agents/skills/`: `bead-workflow` (with its `agents/openai.yaml`), `beads-bulk`, `beads-hygiene`, `prompt-next-work`, `bead-chains`, `mvp-readiness`, `recurring-task`, `window-review`, `dependabot-handler`. (`ask-review` ships in `asks`, with the script it drives.) `bead-chains/SKILL.md` and `prompt-next-work/SKILL.md` run `scripts/bead-chains.mjs`, so they need the `hygiene` set installed alongside Each may read a consumer-owned `LOCAL.md`, see Skill overlays |
+| `skills` | Process skills under `.agents/skills/`: `bead-workflow` (with its `agents/openai.yaml`), `beads-bulk`, `beads-hygiene`, `prompt-next-work`, `bead-chains`, `mvp-readiness`, `recurring-task`, `window-review`, `dependabot-handler`. (`ask-review` ships in `asks`, with the script it drives.) `bead-chains/SKILL.md` and `prompt-next-work/SKILL.md` run `scripts/bead-chains.mjs`, so they need the `hygiene` set installed alongside. Each may read a consumer-owned `LOCAL.md`, see Skill overlays |
 | `docs` | The generic halves of the agent docs under `docs/agents/shared/` |
 | `ritual` | The agent-ritual conformance smoke |
 

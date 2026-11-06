@@ -89,7 +89,7 @@
 # The bead id pattern comes from `beadPrefix` in agent-tooling.json (any prefix when it is unset).
 #
 # Siblings it needs from other sets, checked up front with a message naming the file and the set:
-# scripts/pr-queue-state.mjs and its lib/parse-flags.mjs and lib/gh-rate-limit.mjs (the `gate` set);
+# scripts/pr-queue-state.mjs and its lib/gh-rate-limit.mjs (the `gate` set; lib/parse-flags.mjs is base);
 # scripts/bd-dolt-sync.mjs (the `beads` set) unless LAND_SYNC_CMD is set or --no-wait is given.
 # scripts/pr-watch.mjs is optional.
 set -euo pipefail
@@ -209,7 +209,7 @@ require_script() { # $1 file under scripts/, $2 the set that ships it, $3 what i
   exit 2
 }
 require_script pr-queue-state.mjs gate "the one-request PR state read"
-require_script lib/parse-flags.mjs gate "pr-queue-state.mjs imports it"
+require_script lib/parse-flags.mjs base "pr-queue-state.mjs imports it"
 require_script lib/gh-rate-limit.mjs gate "pr-queue-state.mjs imports it"
 if [ "$NO_WAIT" != "1" ] && [ -z "${LAND_SYNC_CMD:-}" ]; then
   require_script bd-dolt-sync.mjs beads "the verified bead pull after the close"
