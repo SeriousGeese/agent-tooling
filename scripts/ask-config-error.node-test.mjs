@@ -75,7 +75,7 @@ test('loadPeople separates a missing config (no error) from a broken one (the re
   });
 });
 
-test('this repository has no agent-tooling.json, so the default load reports no error', () => {
+test("the default load reports no error for this repository's config", () => {
   assert.equal(defaultPeopleLoadError(), null);
 });
 
@@ -92,9 +92,10 @@ test('ask.mjs main(): a load error is reported and exits 1 before any routing, -
   };
   assert.equal(main(['bd-1', 'bob'], deps), 1);
   assert.equal(out.error.length, 1);
-  assert.match(out.error[0], /^ask: cannot load agent-tooling\.json: .*not valid JSON \(boom\)$/);
+  assert.equal(out.error[0], 'ask: /x/agent-tooling.json: not valid JSON (boom)', 'the loader message, once');
   assert.equal(main(['list'], deps), 1);
   assert.equal(main(['--help'], deps), 0);
+  assert.match(out.log.at(-1), /People: \(none loaded: \/x\/agent-tooling\.json: not valid JSON \(boom\)\)/);
 });
 
 test('ask.mjs as a process: malformed config prints one error naming the file and exits non-zero', () => {
@@ -102,7 +103,8 @@ test('ask.mjs as a process: malformed config prints one error naming the file an
     for (const args of [['list'], ['bd-1', 'bob'], ['clear', 'bd-1', 'bob']]) {
       const r = run(dir, 'ask.mjs', args);
       assert.notEqual(r.status, 0, args.join(' '));
-      assert.match(r.stderr, /^ask: cannot load agent-tooling\.json: .*agent-tooling\.json.*not valid JSON/);
+      assert.match(r.stderr, /^ask: .*agent-tooling\.json: not valid JSON/);
+      assert.equal(r.stderr.split('agent-tooling.json').length, 2, 'the file name appears once');
       assert.equal(r.stderr.trim().split('\n').length, 1, 'one line');
       assert.doesNotMatch(r.stderr, /Unknown person/i, 'never falls through to "unknown person"');
     }

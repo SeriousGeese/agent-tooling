@@ -1,9 +1,14 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+  DEFAULT_DEPS,
   check,
+  gitCommonDirOf,
   expectedFromArgs,
   isGitRemote,
   parseDoltRemotes,
@@ -217,5 +222,85 @@ describe('check without a pinned remote', () => {
     });
     assert.equal(check(REPO, deps), 1);
     assert.ok(deps.errors.join('\n').includes('Elsewhere'));
+  });
+});
+
+// A linked worktree has no embedded database of its own: it lives in the primary checkout, which
+// the git common dir points at. The dolt half of the check must still run from the worktree.
+describe('check from a linked worktree', () => {
+  const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+
+  function fixture({ embedded = true } = {}) {
+    const base = mkdtempSync(path.join(tmpdir(), 'check-beads-remote-wt-'));
+    const primary = path.join(base, 'primary');
+    const linked = path.join(base, 'linked');
+    mkdirSync(path.join(primary, '.beads'), { recursive: true });
+    writeFileSync(path.join(primary, '.beads', 'config.yaml'), `sync:\n    remote: "${EXPECTED_REMOTE}"\n`);
+    git(primary, ['init', '-q']);
+    git(primary, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'add', '-A']);
+    git(primary, ['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'init']);
+    git(primary, ['worktree', 'add', '-q', linked, '-b', 'wt']);
+    const db = path.join(primary, '.beads', 'embeddeddolt', DB_NAME);
+    if (embedded) mkdirSync(path.join(db, '.dolt'), { recursive: true });
+    return { base, primary, linked, db };
+  }
+
+  function depsFor(linked, remotes) {
+    const runs = [];
+    const deps = {
+      ...DEFAULT_DEPS,
+      expected: null,
+      dbName: DB_NAME,
+      gitCommonDir: gitCommonDirOf(linked),
+      run: (cmd, args, opts) => {
+        runs.push({ cmd, cwd: opts?.cwd });
+        return { status: 0, stdout: remotes, stderr: '' };
+      },
+      errors: [],
+      logs: [],
+      log: (...a) => deps.logs.push(a.join(' ')),
+      error: (...a) => deps.errors.push(a.join(' ')),
+    };
+    return { deps, runs };
+  }
+
+  test('the dolt remote check runs against the primary checkout database and reports a missing remote', () => {
+    const fx = fixture();
+    try {
+      assert.equal(existsSync(path.join(fx.linked, '.beads', 'embeddeddolt')), false, 'the worktree has no database of its own');
+      const { deps, runs } = depsFor(fx.linked, '');
+      assert.equal(check(fx.linked, deps), 1, deps.errors.join('\n'));
+      assert.match(deps.errors.join('\n'), /dolt CLI remote "origin" is MISSING/);
+      assert.equal(runs.length, 1);
+      assert.equal(path.resolve(runs[0].cwd), path.resolve(fx.db));
+    } finally {
+      rmSync(fx.base, { recursive: true, force: true, maxRetries: 3 });
+    }
+  });
+
+  test('a mismatched remote is reported, a matching one passes', () => {
+    const fx = fixture();
+    try {
+      const wrong = depsFor(fx.linked, 'origin https://doltremoteapi.dolthub.com/acme/Elsewhere');
+      assert.equal(check(fx.linked, wrong.deps), 1);
+      assert.match(wrong.deps.errors.join('\n'), /Elsewhere/);
+      const right = depsFor(fx.linked, `origin ${EXPECTED_REMOTE}`);
+      assert.equal(check(fx.linked, right.deps), 0, right.deps.errors.join('\n'));
+      assert.equal(right.runs.length, 1, 'the dolt half ran');
+    } finally {
+      rmSync(fx.base, { recursive: true, force: true, maxRetries: 3 });
+    }
+  });
+
+  test('no embedded database anywhere is still "bootstrap first", not a failure', () => {
+    const fx = fixture({ embedded: false });
+    try {
+      const { deps, runs } = depsFor(fx.linked, '');
+      assert.equal(check(fx.linked, deps), 0, deps.errors.join('\n'));
+      assert.equal(runs.length, 0);
+      assert.deepEqual(deps.errors, []);
+    } finally {
+      rmSync(fx.base, { recursive: true, force: true, maxRetries: 3 });
+    }
   });
 });

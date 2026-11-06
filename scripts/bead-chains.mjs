@@ -13,8 +13,11 @@
 //   deferred  status deferred: needs an explicit reason to undefer
 //   claimed   held by an actor other than --actor
 //   other-repo the work lives in another repository: a `repo:*` label other than this
-//              repository's (--repo-label, or AGENT_TOOLING_REPO_LABEL; with neither set the
-//              label is not consulted), or "separate repo" in the title
+//              repository's, or "separate repo" in the title. This repository's label is
+//              --repo-label, else AGENT_TOOLING_REPO_LABEL, else `repo:<origin basename>` (how
+//              oddity.mjs labels beads), else the lower-cased beadPrefix. If none can be derived
+//              the check fails CLOSED: every `repo:*` label is a break (a beads store is shared
+//              across repositories, so ignoring the label would pull their work into this one).
 //   waits:<id> blocked by an open bead outside this chain
 //
 // The chain's "one PR" set is every bead reachable from the root without crossing a break,
@@ -25,8 +28,12 @@
 //
 // Read-only. Edges come from `bd list --format dot`, the one bd output that carries the
 // dependency TYPE, so parent-child and related links are never mistaken for blockers.
+import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+
+import { tryLoadConfig } from './agent-tooling-config.mjs';
+import { REPO_LABEL_PREFIX, normalizeRepoName, repoNameFromRemoteUrl } from './oddity-lib.mjs';
 
 import { bd, bdJson } from './lib/bd-cli.mjs';
 import { parseFlags } from './lib/parse-flags.mjs';
@@ -41,7 +48,11 @@ export function parseDotEdges(dot) {
   return edges;
 }
 
-/** Why `bead` cannot ride in the same PR as the beads before it, or null. */
+/**
+ * Why `bead` cannot ride in the same PR as the beads before it, or null.
+ * `repoLabel` is this repository's `repo:<name>` label; empty means unknown, so any `repo:*`
+ * label counts as another repository (fail closed).
+ */
 export function breakReason(bead, { actor = '', repoLabel = '' } = {}) {
   const labels = bead.labels ?? [];
   if (labels.includes('human-required')) return 'human';
@@ -50,7 +61,7 @@ export function breakReason(bead, { actor = '', repoLabel = '' } = {}) {
   if (bead.status === 'deferred') return 'deferred';
   if (bead.assignee && bead.assignee !== actor) return `claimed:${bead.assignee}`;
   const repo = labels.find((l) => l.startsWith('repo:'));
-  if ((repoLabel && repo && repo !== repoLabel) || /\bseparate repo\b/i.test(bead.title ?? '')) return 'other-repo';
+  if ((repo && repo !== repoLabel) || /\bseparate repo\b/i.test(bead.title ?? '')) return 'other-repo';
   return null;
 }
 
@@ -180,15 +191,67 @@ export function formatChains(chains, byId, { limit = 10 } = {}) {
   return out.join('\n');
 }
 
+/** `repo:<name>` from a flag or env value; a bare name (`app`) means `repo:app`. */
+export function toRepoLabel(value) {
+  const v = String(value ?? '').trim();
+  return `${REPO_LABEL_PREFIX}${normalizeRepoName(v.startsWith(REPO_LABEL_PREFIX) ? v.slice(REPO_LABEL_PREFIX.length) : v)}`;
+}
+
+/**
+ * This repository's `repo:*` label. Precedence: the flag, AGENT_TOOLING_REPO_LABEL, the origin
+ * remote's basename (exactly how oddity.mjs labels beads), the lower-cased beadPrefix.
+ * Returns `{ label: '', note }` when none can be derived: the caller then fails closed.
+ * @param {{ flag?: string, env?: object, remoteUrl?: () => string, beadPrefix?: string | null }} deps
+ */
+export function resolveRepoLabel({ flag, env = process.env, remoteUrl = () => '', beadPrefix = null } = {}) {
+  if (flag) return { label: toRepoLabel(flag), note: null };
+  if (env.AGENT_TOOLING_REPO_LABEL) return { label: toRepoLabel(env.AGENT_TOOLING_REPO_LABEL), note: null };
+  const fromRemote = repoNameFromRemoteUrl(remoteUrl());
+  if (fromRemote) return { label: `${REPO_LABEL_PREFIX}${fromRemote}`, note: null };
+  const fromPrefix = beadPrefix ? String(beadPrefix).toLowerCase() : '';
+  if (fromPrefix) {
+    try {
+      return { label: toRepoLabel(fromPrefix), note: null };
+    } catch {
+      // fall through to fail-closed
+    }
+  }
+  return {
+    label: '',
+    note: 'bead-chains: cannot tell which repo this is (no --repo-label, AGENT_TOOLING_REPO_LABEL, origin remote or beadPrefix); treating every repo:* label as another repository',
+  };
+}
+
+function defaultDeps() {
+  const config = tryLoadConfig().config;
+  return {
+    bd,
+    bdJson,
+    env: process.env,
+    remoteUrl: () => {
+      try {
+        return execFileSync('git', ['-C', config.root, 'remote', 'get-url', 'origin'], { encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'ignore'] });
+      } catch {
+        return '';
+      }
+    },
+    beadPrefix: config.beadPrefix,
+    log: (line) => console.log(line),
+    warn: (line) => console.error(line),
+  };
+}
+
 const USAGE = `Usage: node scripts/bead-chains.mjs [--json] [--all] [--limit N] [--exclude-label <l>...] [--actor <id>] [--repo-label <repo:x>]
   --all            include chains with fewer than 2 beads in their first PR
   --limit N        chains to print (default 10; --json prints all)
   --exclude-label  drop chains whose ROOT carries any of these labels
   --actor <id>     claims held by this actor are not a break (default: none)
-  --repo-label     this repository's repo:* label; a bead with any other repo:* label is a break
-                   (default: $AGENT_TOOLING_REPO_LABEL, else repo labels are ignored)`;
+  --repo-label     this repository's repo:* label (a bare name is fine: app means repo:app); a bead
+                   with any other repo:* label is a break. Default: $AGENT_TOOLING_REPO_LABEL, else
+                   the origin remote's basename, else the lower-cased beadPrefix; if none, every
+                   repo:* label is a break`;
 
-function main(argv) {
+export function main(argv, deps = defaultDeps()) {
   const { flags } = parseFlags(argv, {
     flags: {
       json: { type: 'boolean' },
@@ -201,26 +264,33 @@ function main(argv) {
     },
   });
   if (flags.help) {
-    console.log(USAGE);
+    deps.log(USAGE);
     return 0;
   }
-  const beads = bdJson(['list', '-s', NON_CLOSED, '-n', '0', '--flat', '--json']);
-  const edges = parseDotEdges(bd(['list', '-s', NON_CLOSED, '-n', '0', '--format', 'dot']));
+  const beads = deps.bdJson(['list', '-s', NON_CLOSED, '-n', '0', '--flat', '--json']);
+  const edges = parseDotEdges(deps.bd(['list', '-s', NON_CLOSED, '-n', '0', '--format', 'dot']));
   const byId = new Map(beads.map((b) => [b.id, b]));
+  const { label: repoLabel, note } = resolveRepoLabel({
+    flag: flags['repo-label'],
+    env: deps.env,
+    remoteUrl: deps.remoteUrl,
+    beadPrefix: deps.beadPrefix,
+  });
+  if (note) deps.warn(note);
   const chains = buildChains(beads, edges, {
     actor: flags.actor ?? '',
-    repoLabel: flags['repo-label'] ?? process.env.AGENT_TOOLING_REPO_LABEL ?? '',
+    repoLabel,
     excludeLabels: flags['exclude-label'] ?? [],
   }).filter((c) => flags.all || c.onePr.length >= 2);
   if (flags.json) {
-    console.log(JSON.stringify(chains, null, 2));
+    deps.log(JSON.stringify(chains, null, 2));
     return 0;
   }
   if (!chains.length) {
-    console.log('No chain has two or more beads that can land together.');
+    deps.log('No chain has two or more beads that can land together.');
     return 0;
   }
-  console.log(formatChains(chains, byId, { limit: Number(flags.limit ?? 10) }));
+  deps.log(formatChains(chains, byId, { limit: Number(flags.limit ?? 10) }));
   return 0;
 }
 
@@ -232,4 +302,11 @@ function isMain() {
   }
 }
 
-if (isMain()) process.exitCode = main(process.argv.slice(2));
+if (isMain()) {
+  try {
+    process.exitCode = main(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(`bead-chains: ${error?.message ?? error}\n`);
+    process.exitCode = 1;
+  }
+}

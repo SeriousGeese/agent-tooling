@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { breakReason, buildChains, formatChains, parseDotEdges } from './bead-chains.mjs';
+import { breakReason, buildChains, formatChains, main, parseDotEdges, resolveRepoLabel, toRepoLabel } from './bead-chains.mjs';
 
 const bead = (id, extra = {}) => ({
   id,
@@ -42,7 +42,8 @@ describe('bead-chains', () => {
     const here = { repoLabel: 'repo:here' };
     assert.equal(breakReason(bead('x', { labels: ['repo:elsewhere'] }), here), 'other-repo');
     assert.equal(breakReason(bead('x', { labels: ['repo:here'] }), here), null);
-    assert.equal(breakReason(bead('x', { labels: ['repo:elsewhere'] })), null, 'without a repo label the repo:* labels are not consulted');
+    assert.equal(breakReason(bead('x', { labels: ['repo:here'] })), 'other-repo', 'no known repo label fails closed');
+    assert.equal(breakReason(bead('x', { labels: ['a-label'] })), null, 'no repo:* label is never a break');
   });
 
   test('a straight chain with a fork lands whole, in dependency order', () => {
@@ -120,5 +121,87 @@ describe('bead-chains', () => {
     assert.match(text, /^1\. r: 2 of 3 in one PR, depth 2/);
     assert.match(text, /\n {5}r \[P2 task\] Root\n {7}a \[P2 task\] Next\n/);
     assert.match(text, /d \[P2 task deferred\] Later {2}<- deferred/);
+  });
+});
+
+describe("this repository's repo label", () => {
+  const remote = (url) => () => url;
+
+  test('toRepoLabel accepts the bare name and the full label, lower-cased', () => {
+    assert.equal(toRepoLabel('app'), 'repo:app');
+    assert.equal(toRepoLabel('repo:App'), 'repo:app');
+    assert.throws(() => toRepoLabel('not a name!'), /usable repo name/);
+  });
+
+  test('derived from the origin basename, as oddity.mjs labels beads', () => {
+    assert.deepEqual(resolveRepoLabel({ env: {}, remoteUrl: remote('https://example.com/Org/My-App.git') }), { label: 'repo:my-app', note: null });
+    assert.equal(resolveRepoLabel({ env: {}, remoteUrl: remote('git@example.com:Org/Tools.git') }).label, 'repo:tools');
+  });
+
+  test('without an origin remote it falls back to the lower-cased beadPrefix', () => {
+    assert.equal(resolveRepoLabel({ env: {}, remoteUrl: remote(''), beadPrefix: 'Acme' }).label, 'repo:acme');
+    assert.equal(resolveRepoLabel({ env: {}, beadPrefix: 'Acme' }).label, 'repo:acme');
+  });
+
+  test('the origin wins over the beadPrefix', () => {
+    assert.equal(resolveRepoLabel({ env: {}, remoteUrl: remote('https://x/o/tools.git'), beadPrefix: 'Acme' }).label, 'repo:tools');
+  });
+
+  test('nothing derivable fails closed with one note', () => {
+    const r = resolveRepoLabel({ env: {}, remoteUrl: remote(''), beadPrefix: null });
+    assert.equal(r.label, '');
+    assert.match(r.note, /cannot tell which repo/);
+  });
+
+  test('precedence: flag, then AGENT_TOOLING_REPO_LABEL, then derivation; a bare name works in both', () => {
+    const base = { remoteUrl: remote('https://x/o/derived.git'), beadPrefix: 'Pfx' };
+    assert.equal(resolveRepoLabel({ ...base, flag: 'flagged', env: { AGENT_TOOLING_REPO_LABEL: 'repo:envd' } }).label, 'repo:flagged');
+    assert.equal(resolveRepoLabel({ ...base, env: { AGENT_TOOLING_REPO_LABEL: 'envd' } }).label, 'repo:envd');
+    assert.equal(resolveRepoLabel({ ...base, env: {} }).label, 'repo:derived');
+  });
+
+  // main() end to end with a stub bd: r blocks a and o; r and a are repo:here, o is repo:elsewhere.
+  function run(argv, over = {}) {
+    const beads = [
+      bead('r', { labels: ['repo:here'] }),
+      bead('a', { labels: ['repo:here'] }),
+      bead('o', { labels: ['repo:elsewhere'] }),
+    ];
+    const dot = '"a" -> "r" [label="blocks"];\n"o" -> "r" [label="blocks"];';
+    const out = { log: [], warn: [] };
+    const code = main(argv, {
+      bdJson: () => beads,
+      bd: () => dot,
+      env: {},
+      remoteUrl: () => '',
+      beadPrefix: null,
+      log: (l) => out.log.push(l),
+      warn: (l) => out.warn.push(l),
+      ...over,
+    });
+    return { code, out };
+  }
+
+  test("main(): another repo's bead stays out of the first PR, by the derived label", () => {
+    const { code, out } = run(['--json'], { remoteUrl: () => 'https://x/o/here.git' });
+    assert.equal(code, 0);
+    const [chain] = JSON.parse(out.log[0]);
+    assert.deepEqual(chain.onePr.map((e) => e.id), ['r', 'a']);
+    assert.deepEqual(chain.later, [{ id: 'o', reason: 'other-repo' }]);
+    assert.deepEqual(out.warn, []);
+  });
+
+  test('main(): --repo-label (a bare name) overrides the environment', () => {
+    const { out } = run(['--json', '--all', '--repo-label', 'elsewhere'], { env: { AGENT_TOOLING_REPO_LABEL: 'here' } });
+    const [chain] = JSON.parse(out.log[0]);
+    assert.deepEqual(chain.later.find((e) => e.id === 'r'), { id: 'r', reason: 'other-repo' });
+  });
+
+  test('main(): with no way to tell which repo this is, every repo:* label is a break and one note is printed', () => {
+    const { out } = run(['--json', '--all']);
+    assert.equal(out.warn.length, 1);
+    const [chain] = JSON.parse(out.log[0]);
+    assert.deepEqual(chain.onePr, [], 'no bead rides along when all are other-repo');
+    assert.equal(chain.later.length, 3);
   });
 });

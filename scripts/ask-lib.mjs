@@ -169,9 +169,9 @@ export function askMetaKeys(personKey) {
  * Order:
  *   1. ASK_PERSON env: explicit override, also how you inspect the other person's inbox from
  *      your own machine without impersonating them in bd.
- *   2. The session's actor base (scripts/agent-actor-id.mjs) matched EXACTLY against actorBases
- *      (a bare handle gets `<handle>` and `<handle>-bot`; `bob-jones` is not `bob`). This is the normal path: BEADS_ACTOR_BASE can be set per
- *      machine.
+ *   2. The session's actor base (scripts/agent-actor-id.mjs) matched EXACTLY against
+ *      actorBases (a bare handle gets `<handle>` and `<handle>-bot`; `bob-jones` is not
+ *      `bob`). This is the normal path: BEADS_ACTOR_BASE can be set per machine.
  *   3. git user.email matched against emails (only people given `emails` aliases), which
  *      covers a plain shell with no agent env at all.
  *

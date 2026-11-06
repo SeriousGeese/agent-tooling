@@ -33,8 +33,9 @@ node scripts/bead-chains.mjs --all --limit 30     # include chains a break cuts 
 node scripts/bead-chains.mjs --json               # for a script
 ```
 
-Set `AGENT_TOOLING_REPO_LABEL` (or pass `--repo-label`) to this repository's `repo:*` label so a bead
-labelled for another repository counts as an `other-repo` break; without it that label is ignored.
+A bead labelled `repo:<other>` counts as an `other-repo` break. This repository's label is `--repo-label`
+(a bare name is fine), else `AGENT_TOOLING_REPO_LABEL`, else `repo:<origin basename>`, else the lower-cased
+bead prefix; if none can be derived, every `repo:*` label is a break and a note says so.
 
 **To check the script's output by hand,** `bd list --format dot`
 prints the dependency edges (the only output that carries the edge type; read only `blocks`

@@ -1,11 +1,14 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { BD_MAX_BUFFER, BD_TIMEOUT_MS, bd, bdJson, parseBdJsonRows } from './lib/bd-cli.mjs';
 import { removeTempDir } from './test-support/cleanup.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * scripts/lib/bd-cli.mjs is the shared `bd` caller. A copy without a maxBuffer is one
@@ -66,6 +69,19 @@ describe('bd-cli', () => {
     } finally {
       process.env.PATH = oldPath;
       removeTempDir(dir, 'bd-cli.node-test');
+    }
+  });
+
+  // Each caller that exists in this checkout uses the shared helper; a local bd()/runBd() copy
+  // is how one of them once lacked the maxBuffer backstop.
+  test('callers import the shared helper and define no bd() of their own', () => {
+    const stripComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+    for (const file of ['ask.mjs', 'hygiene-bd-lib.mjs', 'bead-chains.mjs']) {
+      const abs = path.join(HERE, file);
+      if (!existsSync(abs)) continue;
+      const src = stripComments(readFileSync(abs, 'utf8'));
+      assert.ok(/from '\.\/lib\/bd-cli\.mjs'/.test(src), `${file} must import ./lib/bd-cli.mjs`);
+      assert.ok(!/^\s*(export\s+)?(async\s+)?function\s+(run)?[bB]d\s*\(/m.test(src), `${file} must not define its own bd()/runBd()`);
     }
   });
 });

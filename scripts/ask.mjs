@@ -57,8 +57,11 @@ const SYNC_HELPER = path.join(HERE, 'bd-dolt-sync.mjs');
  */
 const BARE_SYNC_TIMEOUT_MS = 300_000;
 
-function usage(people) {
-  const known = personKeys(people).join(', ') || '(none configured: add handles to "people" in agent-tooling.json)';
+function usage(people, loadError = null) {
+  const none = loadError
+    ? `(none loaded: ${String(loadError).replace(/\s+/g, ' ').trim()})`
+    : '(none configured: add handles to "people" in agent-tooling.json)';
+  const known = personKeys(people).join(', ') || none;
   return `
 Asks: route a bead to a person for an async decision.
 
@@ -352,13 +355,14 @@ export function main(argv, deps = defaultDeps()) {
   // (`deps.people` supplied means the caller owns the table; --help needs none.)
   const peopleError = deps.peopleError !== undefined ? deps.peopleError : deps.people ? null : defaultPeopleLoadError();
   if (peopleError && command !== 'help') {
-    deps.error(`ask: cannot load agent-tooling.json: ${String(peopleError).replace(/\s+/g, ' ').trim()}`);
+    // The loader's message already names the file; print it once.
+    deps.error(`ask: ${String(peopleError).replace(/\s+/g, ' ').trim()}`);
     return 1;
   }
 
   switch (command) {
     case 'help':
-      deps.log(usage(deps.people));
+      deps.log(usage(deps.people, peopleError));
       return 0;
     case 'list':
       cmdList(deps, { forKey: flags.forKey, json: flags.json });

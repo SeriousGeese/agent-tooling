@@ -83,10 +83,10 @@ if (isMain()) {
     const loadError = defaultPeopleLoadError();
     if (loadError) {
       process.stdout.write(`${configErrorLine(loadError)}\n`);
-      process.exit(0);
+    } else {
+      const banner = buildInboxBanner();
+      if (banner) process.stdout.write(`${banner}\n`);
     }
-    const banner = buildInboxBanner();
-    if (banner) process.stdout.write(`${banner}\n`);
   } catch {
     // Fail open, always and silently. See the header.
   }
