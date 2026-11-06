@@ -29,7 +29,7 @@
 // shorter NO_PID_MAX_AGE_MS applies. A dead pid, or a record older than the cap, never blocks:
 // a crashed session cannot pin a worktree forever, and an orphaned record is deleted when a
 // check reads it.
-import fs from 'node:fs';
+import fs, { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -318,7 +318,7 @@ function main(argv) {
 /** True when this file is the script node was started on. Both sides go through realpath, so a symlinked or 8.3-short-named path still matches. */
 function isEntryPoint() {
   try {
-    return Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
   } catch {
     return false;
   }
