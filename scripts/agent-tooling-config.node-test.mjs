@@ -2,7 +2,7 @@
 // itself and never spells the neutral escape-hatch prefix as one literal.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -194,6 +194,63 @@ test('findRoot stops at the nearest config or .git, including a worktree .git fi
     assert.equal(findRoot(path.join(wt, 'scripts', 'hooks')), path.resolve(wt));
     assert.equal(loadConfig({ from: path.join(wt, 'scripts', 'hooks') }).found, false);
   } finally {
+    rmSync(outer, { recursive: true, force: true });
+  }
+});
+
+test('findRoot reads a missing entry, or a path under a file, as absent', () => {
+  const root = repo();
+  try {
+    // `from` naming a file stats `<file>/agent-tooling.json`: ENOTDIR on POSIX, ENOENT on Windows.
+    const file = path.join(root, 'scripts', 'hook.mjs');
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, '');
+    assert.equal(findRoot(file), path.resolve(root));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('findRoot rethrows a stat error that is not absence, instead of walking past the real root', (t) => {
+  // An outer repository with its own config, and an inner one whose config cannot be statted:
+  // read as "absent", the walk would silently load the OUTER repository's config.
+  const outer = repo({ envPrefix: 'OUTER_' });
+  try {
+    const inner = path.join(outer, 'inner');
+    const deep = path.join(inner, 'scripts');
+    mkdirSync(deep, { recursive: true });
+    const loop = path.join(inner, CONFIG_FILE);
+    try {
+      symlinkSync(loop, loop, 'junction'); // a link to itself: stat says ELOOP
+    } catch (err) {
+      t.skip(`this host cannot create a link (${/** @type {NodeJS.ErrnoException} */ (err).code})`);
+      return;
+    }
+    assert.throws(() => findRoot(deep), (err) => /** @type {NodeJS.ErrnoException} */ (err).code === 'ELOOP');
+    assert.throws(() => loadConfig({ from: deep }), (err) => /** @type {NodeJS.ErrnoException} */ (err).code === 'ELOOP');
+    // The fail-open form still never throws, and does not hand back the outer config.
+    const { config, error } = tryLoadConfig({ from: deep });
+    assert.match(error, /ELOOP/);
+    assert.equal(config.envPrefix, P);
+    assert.equal(config.root, path.resolve(deep));
+  } finally {
+    rmSync(outer, { recursive: true, force: true });
+  }
+});
+
+test('findRoot rethrows EACCES from a directory it cannot search', (t) => {
+  if (process.platform === 'win32' || process.getuid?.() === 0) {
+    t.skip('needs POSIX permissions and a non-root user');
+    return;
+  }
+  const outer = repo({ envPrefix: 'OUTER_' });
+  const locked = path.join(outer, 'locked');
+  try {
+    mkdirSync(path.join(locked, 'scripts'), { recursive: true });
+    chmodSync(locked, 0o000);
+    assert.throws(() => findRoot(path.join(locked, 'scripts')), (err) => /** @type {NodeJS.ErrnoException} */ (err).code === 'EACCES');
+  } finally {
+    chmodSync(locked, 0o755);
     rmSync(outer, { recursive: true, force: true });
   }
 });
