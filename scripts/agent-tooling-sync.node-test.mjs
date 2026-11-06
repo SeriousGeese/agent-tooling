@@ -366,6 +366,32 @@ test('re-sync keeps the recorded sets; a dropped set or a de-listed file is dele
   }
 });
 
+test('a stale file the consumer has changed or replaced is kept, even though the recorded ref shipped it', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    await sync({ into: dst, ref: src.sha, sets: ['asks', 'worktree'], from: src.root });
+    // claim.sh is now the consumer's own (edited); the inbox hook is byte-for-byte vendored.
+    write(dst, 'scripts/claim.sh', 'claim, the consumer version\n');
+    await sync({ into: dst, ref: src.sha, sets: [], drop: true, from: src.root });
+    assert.equal(readFileSync(path.join(dst, 'scripts/claim.sh'), 'utf8'), 'claim, the consumer version\n', 'an edited file is kept');
+    assert.equal(existsSync(path.join(dst, 'scripts/hooks/ask-inbox.mjs')), false, 'an untouched vendored file is still deleted');
+    // The prefix rewrite is part of what sync wrote: a file under the recorded prefix counts as unchanged.
+    const src2 = fakeSource(MANIFEST, FILES);
+    const dst2 = consumer();
+    try {
+      await sync({ into: dst2, ref: src2.sha, sets: ['asks'], envPrefix: 'ACME_', from: src2.root });
+      assert.match(readFileSync(path.join(dst2, 'scripts/ask.mjs'), 'utf8'), /ACME_ALLOW_X/);
+      await sync({ into: dst2, ref: src2.sha, sets: [], drop: true, from: src2.root });
+      assert.equal(existsSync(path.join(dst2, 'scripts/ask.mjs')), false);
+    } finally {
+      clean(src2.root, dst2);
+    }
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
 test('a path recorded in CICD-HOOKS-SHA is refused before anything is written', async () => {
   const src = fakeSource(MANIFEST, FILES);
   const dst = consumer();

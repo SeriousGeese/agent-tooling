@@ -372,13 +372,30 @@ export async function sync(opts) {
     mkdirSync(path.dirname(abs), { recursive: true });
     writeFileSync(abs, contents[i]);
   });
+  // The record and the old manifest only say a path WAS vendored; the consumer may have taken
+  // it over since (a hand edit, a file of its own at a name the manifest later claimed). So a
+  // stale file is deleted only when its bytes are still exactly what the recorded ref wrote,
+  // under the recorded prefix. Anything else is kept, and the sync says so.
   for (const f of stale) {
     if (!shippedBefore.has(f)) continue;
     const abs = inside(opts.into, f);
+    const keep = (why) => process.stderr.write(`agent-tooling-sync: not deleting stale ${f}: ${why}\n`);
     try {
       assertRealInside(opts.into, abs, f);
     } catch (err) {
-      process.stderr.write(`agent-tooling-sync: not deleting stale ${f}: ${/** @type {Error} */ (err).message}\n`);
+      keep(/** @type {Error} */ (err).message);
+      continue;
+    }
+    if (!existsSync(abs)) continue;
+    let wrote;
+    try {
+      wrote = transform(await readAtRef(previous.ref, f, opts.from), previous.envPrefix);
+    } catch (err) {
+      keep(`cannot read it at ${previous.ref} to confirm it is unchanged (${/** @type {Error} */ (err).message})`);
+      continue;
+    }
+    if (readFileSync(abs, 'utf8').replace(/\r\n/g, '\n') !== wrote) {
+      keep(`it differs from what ${REPO}@${previous.ref.slice(0, 12)} wrote, so it is treated as the consumer's; delete it by hand if it is not`);
       continue;
     }
     rmSync(abs, { force: true });
