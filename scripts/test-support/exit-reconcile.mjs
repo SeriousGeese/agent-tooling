@@ -16,6 +16,16 @@ import os from 'node:os';
  * @returns {{exitCode: number, attributable: boolean, message: string|null}}
  */
 export function reconcileExit({ label, code, signal, summary }) {
+  // A green run of nothing is a typo in a glob, not a pass: node --test exits 0 when no
+  // file matches. Only a summary that says zero tests ran turns it red; an unreadable
+  // summary on a clean exit keeps its old meaning.
+  if (code === 0 && !signal && summary?.counts && summary.counts.tests === 0) {
+    return {
+      exitCode: 1,
+      attributable: true,
+      message: `\n[${label}] node --test ran ZERO tests: no file matched, so the gate checked nothing. Fix the path or glob.`,
+    };
+  }
   if (code === 0 && !signal) {
     return { exitCode: 0, attributable: true, message: null };
   }

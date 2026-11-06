@@ -50,8 +50,10 @@ export function importsOf(source) {
   return specs;
 }
 
-// Case-insensitive: a consumer's name in any spelling, its people, its hostnames.
-export const NON_NEUTRAL = /\bDnD\b|\bDND_|\bPROMPTCI_|promptci-cloud|tooling-oddities|\bdave\b|\bzach\b|vtt\.seriousgeese\.dev|stagevtt/i;
+// Case-insensitive: a consumer's name in any spelling, its people, its hostnames. Naming them
+// here is deliberate and the one place they appear: this file is never vendored, and a
+// denylist has to spell what it denies.
+export const NON_NEUTRAL = /\bDnD\b|\bDND_|\bPROMPTCI_|promptci-cloud|\baftermath\b|tooling-oddities|\bdave\b|\bzach\b|vtt\.seriousgeese\.dev|stagevtt/i;
 
 test('every manifest path exists, and every file under a vendored root is listed', () => {
   const onDisk = ROOTS.flatMap((root) => walk(root)).filter((f) => !REPO_OWN.has(f)).sort();
@@ -115,7 +117,7 @@ test('no vendored file names a consumer, its people or its hostnames', () => {
 });
 
 test('the neutral-text pattern catches what it is meant to (so a clean result means something)', () => {
-  for (const s of ['see DnD-abc12', 'DND_ALLOW_X', 'ask Zach', 'dave said', 'https://vtt.seriousgeese.dev', 'tooling-oddities entry 1']) {
+  for (const s of ['see DnD-abc12', 'DND_ALLOW_X', 'ask Zach', 'dave said', 'https://vtt.seriousgeese.dev', 'tooling-oddities entry 1', 'the Aftermath repo']) {
     assert.match(s, NON_NEUTRAL, s);
   }
   for (const s of ['AGENT_TOOLING_ALLOW_X', 'bd-abc12', 'scripts/claim.sh']) assert.doesNotMatch(s, NON_NEUTRAL, s);

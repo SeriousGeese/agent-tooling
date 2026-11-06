@@ -18,7 +18,7 @@
 //
 // Runs via `npm run test:scripts` -> scripts/*.node-test.mjs.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -96,6 +96,19 @@ test('reconcileExit passes a clean run straight through with no banner', () => {
   const result = reconcileExit({ label: 'x', code: 0, signal: null, summary: null });
   assert.equal(result.exitCode, 0);
   assert.equal(result.message, null);
+});
+
+test('reconcileExit fails a clean exit that ran zero tests (a glob that matched nothing)', () => {
+  const zero = reconcileExit({ label: 'x', code: 0, signal: null, summary: { sawAnySummary: true, counts: { tests: 0, failed: 0 } } });
+  assert.equal(zero.exitCode, 1);
+  assert.match(zero.message, /ZERO tests/);
+  const some = reconcileExit({ label: 'x', code: 0, signal: null, summary: { sawAnySummary: true, counts: { tests: 3, failed: 0 } } });
+  assert.equal(some.exitCode, 0);
+});
+
+test('the runner exits nonzero end to end when its glob matches nothing', () => {
+  const r = spawnSync(process.execPath, [WRAPPER, 'zero-match', 'no-such-dir/**/*.node-test.mjs'], { encoding: 'utf8' });
+  assert.notEqual(r.status, 0, `${r.stdout}${r.stderr}`);
 });
 
 test('reconcileExit stays quiet when the failure IS attributable to a test', () => {

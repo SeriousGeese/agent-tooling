@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,6 +65,14 @@ function commit(root, manifest, files) {
 
 const consumer = () => mkdtempSync(path.join(tmpdir(), 'agent-tooling-dst-'));
 const clean = (...dirs) => dirs.forEach((d) => rmSync(d, { recursive: true, force: true }));
+/** Removes a symlink or junction itself, never what it points at. */
+function unlinkLink(p) {
+  try {
+    unlinkSync(p);
+  } catch {
+    rmdirSync(p);
+  }
+}
 
 const SCRIPT = `if (process.env.${P}ALLOW_X === '1') process.exit(0);\n// set ${P}ALLOW_X=1\n`;
 const MANIFEST = {
@@ -92,7 +100,7 @@ test('pure helpers', () => {
   for (const ok of ['scripts/a.mjs', 'scripts/hooks/ask-inbox.mjs', '.agents/skills/x/SKILL.md', 'docs/agents/shared/a.md', 'templates/a.yml']) {
     assert.equal(isSafePath(ok), true, ok);
   }
-  for (const bad of ['../x', '/abs/x', 'C:/x', 'scripts\\x.mjs', 'src/x.ts', 'scripts', 'scripts/../x', 'scripts/./x', '']) {
+  for (const bad of ['../x', '/abs/x', 'C:/x', 'scripts\\x.mjs', 'src/x.ts', 'scripts', 'scripts/../x', 'scripts/./x', '', 'scripts/x.', 'scripts/CON', 'scripts/nul.txt', 'docs/com1.md', 'scripts/LPT9']) {
     assert.equal(isSafePath(bad), false, JSON.stringify(bad));
   }
   assert.deepEqual(parseArgs(['--into', '.', '--check']), {
@@ -103,6 +111,8 @@ test('pure helpers', () => {
   });
   assert.deepEqual(parseArgs(['--into', '.', '--set', 'asks, worktree']).sets, ['asks', 'worktree']);
   assert.deepEqual(parseArgs(['--into', '.', '--set', 'none']).sets, []);
+  assert.throws(() => parseArgs(['--into', '.', '--set', 'none,asks']), /cannot be combined/);
+  assert.equal(isSafePath('scripts/console.mjs'), true, 'a reserved name only as the whole stem');
   assert.throws(() => parseArgs(['--bogus']), /unknown argument/);
   assert.throws(() => parseArgs(['--into']), /needs a value/);
 });
@@ -118,6 +128,78 @@ test('the SHA file round-trips, including no sets', () => {
   assert.match(formatShaFile(none), /^sets: none$/m);
   assert.deepEqual(parseShaFile(formatShaFile(none)), none);
   assert.throws(() => parseShaFile('files:\n'), /missing its ref/);
+  // A record is plain text: a ref that is not a pinned SHA is refused, never passed to git or a URL.
+  assert.throws(() => parseShaFile(formatShaFile({ ...rec, ref: '--output=x' })), /not a full 40-hex/);
+});
+
+test('sync refuses an unpinned ref even when called as a library', async () => {
+  const dst = consumer();
+  try {
+    await assert.rejects(sync({ into: dst, ref: 'main', from: dst }), /full 40-hex/);
+  } finally {
+    clean(dst);
+  }
+});
+
+test('a stale file is deleted only when the manifest at the recorded ref shipped it', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    await sync({ into: dst, ref: src.sha, sets: ['asks'], from: src.root });
+    // A consumer's own file, written into the record by hand.
+    write(dst, 'scripts/mine.mjs', 'consumer-owned\n');
+    const shaPath = path.join(dst, DEFAULT_SHA_FILE);
+    writeFileSync(shaPath, readFileSync(shaPath, 'utf8').replace('files:\n', 'files:\n  scripts/mine.mjs\n'));
+    await sync({ into: dst, ref: src.sha, from: src.root });
+    assert.equal(readFileSync(path.join(dst, 'scripts/mine.mjs'), 'utf8'), 'consumer-owned\n');
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
+test('the one-owner rule ignores case, in sync and in --check', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    write(dst, 'scripts/hooks/CICD-HOOKS-SHA', 'ref: ' + 'c'.repeat(40) + '\nenv-prefix: ACME_\nfiles:\n  Ask-Inbox.mjs\n');
+    await assert.rejects(sync({ into: dst, ref: src.sha, sets: ['asks'], from: src.root }), /refusing to write 1 path/);
+    // A record written before CICD claimed the path: --check names the double ownership.
+    rmSync(path.join(dst, 'scripts/hooks/CICD-HOOKS-SHA'));
+    await sync({ into: dst, ref: src.sha, sets: ['asks'], from: src.root });
+    write(dst, 'scripts/hooks/CICD-HOOKS-SHA', 'ref: ' + 'c'.repeat(40) + '\nenv-prefix: ACME_\nfiles:\n  ask-inbox.mjs\n');
+    const problems = await check({ into: dst, from: src.root });
+    assert.ok(problems.some((p) => /recorded by both/.test(p)), problems.join('\n'));
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
+test('a symlinked directory that leads outside --into is refused before anything is written', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  const elsewhere = consumer();
+  try {
+    symlinkSync(elsewhere, path.join(dst, 'scripts'), 'junction');
+    await assert.rejects(sync({ into: dst, ref: src.sha, from: src.root }), /symlink in the path leads outside --into/);
+    assert.deepEqual(readdirSync(elsewhere), [], 'nothing written through the link');
+  } finally {
+    unlinkLink(path.join(dst, 'scripts'));
+    clean(src.root, dst, elsewhere);
+  }
+});
+
+test('the CLI runs when reached through a symlinked or junctioned directory', () => {
+  const dst = consumer();
+  const link = path.join(consumer(), 'linked');
+  try {
+    symlinkSync(path.dirname(SYNC), link, 'junction');
+    const r = spawnSync(process.execPath, [path.join(link, path.basename(SYNC)), '--into', dst, '--check'], { encoding: 'utf8' });
+    assert.equal(r.status, 1, `--check through a link must run and fail on a missing record:\n${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, /is missing/);
+  } finally {
+    unlinkLink(link);
+    clean(dst, path.dirname(link));
+  }
 });
 
 test('parseManifest and selectFiles', () => {

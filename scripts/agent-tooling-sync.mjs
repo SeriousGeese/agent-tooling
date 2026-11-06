@@ -13,7 +13,7 @@
 //     config loader, the node:test runner) plus the files of the named sets (`--set`,
 //     comma-separated; `all` is every set; default: the sets recorded by the last sync, else
 //     none), then reads every one of them;
-//   - rewrites the neutral `AGENT_TOOLING_` prefix to the consumer's prefix (--env-prefix,
+//   - rewrites the neutral prefix (AGENT_TOOLING plus an underscore) to the consumer's prefix (--env-prefix,
 //     else `envPrefix` from the consumer's agent-tooling.json, else the prefix the last sync
 //     recorded, else unchanged), so a consumer
 //     keeps the hatch names its docs teach (`ACME_ALLOW_CLAIM_STEAL`);
@@ -32,7 +32,7 @@
 //
 // Dependency-free, and imports no sibling: a first adoption fetches this one file alone.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -85,7 +85,11 @@ export function parseSetList(text) {
     .map((s) => s.trim())
     .filter(Boolean);
   if (names.length === 0) throw new Error('--set needs at least one set name (or "none")');
-  return names.includes('none') ? [] : names;
+  if (names.includes('none')) {
+    if (names.length > 1) throw new Error(`"none" cannot be combined with other sets: ${names.join(',')}`);
+    return [];
+  }
+  return names;
 }
 
 /** A full commit SHA. A branch or tag is a mutable pointer and is refused. */
@@ -107,7 +111,16 @@ export function isSafePath(p) {
   if (!s || s.includes('\\') || s.startsWith('/') || /^[A-Za-z]:/.test(s)) return false;
   const segs = s.split('/');
   if (!ROOTS.includes(segs[0]) || segs.length < 2) return false;
-  return segs.every((seg) => seg !== '.' && seg !== '..' && /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/.test(seg));
+  // Windows aliases a trailing dot away and reserves device names (with any extension), so
+  // either would write somewhere other than the path the manifest names, or fail.
+  return segs.every(
+    (seg) =>
+      seg !== '.' &&
+      seg !== '..' &&
+      /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/.test(seg) &&
+      !seg.endsWith('.') &&
+      !/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i.test(seg),
+  );
 }
 
 /** The exact bytes a consumer should have for one vendored file. */
@@ -141,6 +154,7 @@ export function parseShaFile(text) {
     .map((l) => l.trim())
     .filter(Boolean);
   if (!ref || !envPrefix || !setsLine) throw new Error('AGENT-TOOLING-SHA is missing its ref, env-prefix or sets line');
+  if (!isPinnedRef(ref)) throw new Error(`AGENT-TOOLING-SHA records a ref that is not a full 40-hex commit SHA: ${ref}`);
   return { ref, envPrefix, sets: parseSetList(setsLine), files };
 }
 
@@ -186,6 +200,22 @@ function inside(into, rel) {
   if (!r || r.startsWith('..') || path.isAbsolute(r)) throw new Error(`refusing a path outside --into: ${rel}`);
   return abs;
 }
+
+/**
+ * `inside()` is lexical. A symlinked directory in the consumer's tree (`scripts -> /elsewhere`)
+ * would still carry a write out of `--into`, so before writing, the nearest existing ancestor
+ * of the target must resolve, through every link, to somewhere inside the real `--into`.
+ */
+function assertRealInside(into, abs, rel) {
+  const root = realpathSync(path.resolve(into));
+  let probe = path.dirname(abs);
+  while (!existsSync(probe)) probe = path.dirname(probe);
+  const r = path.relative(root, realpathSync(probe));
+  if (r.startsWith('..') || path.isAbsolute(r)) throw new Error(`refusing ${rel}: a symlink in the path leads outside --into`);
+}
+
+/** Lower-cased, so a case-insensitive filesystem cannot give one path two owners. */
+const ownedKey = (p) => p.toLowerCase();
 
 /**
  * Read `<rel>` at `ref`.
@@ -259,6 +289,7 @@ async function manifestAt(ref, from) {
  * @returns {Promise<string[]>} the files written
  */
 export async function sync(opts) {
+  if (!isPinnedRef(opts.ref)) throw new Error(`ref must be a full 40-hex commit SHA (a branch or tag can move): ${opts.ref}`);
   const shaRel = opts.shaFile ?? DEFAULT_SHA_FILE;
   const shaPath = inside(opts.into, shaRel);
   const previous = existsSync(shaPath) ? parseShaFile(readFileSync(shaPath, 'utf8')) : null;
@@ -284,8 +315,8 @@ export async function sync(opts) {
     }
   }
 
-  const cicd = cicdOwnedPaths(opts.into, opts.cicdShaFile ?? DEFAULT_CICD_SHA_FILE);
-  const clash = files.filter((f) => cicd.has(f));
+  const cicd = new Set([...cicdOwnedPaths(opts.into, opts.cicdShaFile ?? DEFAULT_CICD_SHA_FILE)].map(ownedKey));
+  const clash = files.filter((f) => cicd.has(ownedKey(f)));
   if (clash.length) {
     throw new Error(
       `refusing to write ${clash.length} path(s) that ${opts.cicdShaFile ?? DEFAULT_CICD_SHA_FILE} records as vendored from SeriousGeese/CICD ` +
@@ -294,13 +325,25 @@ export async function sync(opts) {
   }
 
   const contents = await Promise.all(files.map(async (f) => transform(await readAtRef(opts.ref, f, opts.from), envPrefix)));
-  files.forEach((f, i) => {
-    const abs = inside(opts.into, f);
+  const targets = files.map((f) => inside(opts.into, f));
+  targets.forEach((abs, i) => assertRealInside(opts.into, abs, files[i]));
+  // A stale file is deleted only when the manifest at the recorded ref shipped it: the
+  // record's own file list is plain text a hand edit could point at a consumer's file.
+  const stale = (previous?.files ?? []).filter((f) => !files.includes(f) && isSafePath(f) && !cicd.has(ownedKey(f)));
+  let shippedBefore = new Set();
+  if (stale.length) {
+    try {
+      shippedBefore = new Set(selectFiles(await manifestAt(previous.ref, opts.from), [ALL_SET]));
+    } catch (err) {
+      process.stderr.write(`agent-tooling-sync: not deleting ${stale.length} stale file(s): cannot read manifest.json at ${previous.ref} (${/** @type {Error} */ (err).message})\n`);
+    }
+  }
+  targets.forEach((abs, i) => {
     mkdirSync(path.dirname(abs), { recursive: true });
     writeFileSync(abs, contents[i]);
   });
-  for (const stale of previous?.files ?? []) {
-    if (!files.includes(stale) && isSafePath(stale) && !cicd.has(stale)) rmSync(inside(opts.into, stale), { force: true });
+  for (const f of stale) {
+    if (shippedBefore.has(f)) rmSync(inside(opts.into, f), { force: true });
   }
   mkdirSync(path.dirname(shaPath), { recursive: true });
   writeFileSync(shaPath, formatShaFile({ ref: opts.ref, envPrefix, sets, files }));
@@ -308,7 +351,7 @@ export async function sync(opts) {
 }
 
 /**
- * @param {{ into: string, shaFile?: string, from?: string }} opts
+ * @param {{ into: string, shaFile?: string, cicdShaFile?: string, from?: string }} opts
  * @returns {Promise<string[]>} one line per problem; empty when the vendored copy is exact
  */
 export async function check(opts) {
@@ -324,6 +367,9 @@ export async function check(opts) {
     return [`${shaRel} records ${/** @type {Error} */ (err).message} at ${rec.ref}`];
   }
   const problems = [];
+  const cicd = new Set([...cicdOwnedPaths(opts.into, opts.cicdShaFile ?? DEFAULT_CICD_SHA_FILE)].map(ownedKey));
+  const both = wanted.filter((f) => cicd.has(ownedKey(f)));
+  if (both.length) problems.push(`${both.join(', ')}: recorded by both ${shaRel} and ${opts.cicdShaFile ?? DEFAULT_CICD_SHA_FILE} (a path has one owner)`);
   if ([...rec.files].sort().join('\n') !== wanted.join('\n')) {
     problems.push(`${shaRel} file list does not match set(s) ${rec.sets.join(',') || 'none'} in manifest.json at ${rec.ref}: re-run sync`);
   }
@@ -353,7 +399,7 @@ async function main() {
     return 2;
   }
   if (opts.check) {
-    const problems = await check({ into: opts.into, shaFile: opts.shaFile, from: opts.from });
+    const problems = await check({ into: opts.into, shaFile: opts.shaFile, cicdShaFile: opts.cicdShaFile, from: opts.from });
     if (problems.length === 0) {
       process.stdout.write('[agent-tooling-drift] vendored agent-tooling files match their recorded ref.\n');
       return 0;
@@ -377,7 +423,19 @@ async function main() {
   return 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/** Real path, or the resolved one when it cannot be read. */
+const real = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+};
+
+// Compared through realpath on both sides: node resolves import.meta.url through symlinks
+// and junctions but leaves argv[1] as typed, so a plain comparison skipped main() for a
+// linked checkout and `--check` exited 0 having checked nothing.
+if (process.argv[1] && real(process.argv[1]) === real(fileURLToPath(import.meta.url))) {
   main().then(
     (code) => process.exit(code),
     (err) => {
