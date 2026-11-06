@@ -52,7 +52,12 @@ const SYNC_HELPER = path.join(HERE, 'bd-dolt-sync.mjs');
 const BD_TIMEOUT_MS = 120_000;
 /** Node's 1 MB default overflows as a bare `spawnSync bd ENOBUFS` on a big tracker. */
 const BD_MAX_BUFFER = 64 * 1024 * 1024;
-const SYNC_TIMEOUT_MS = 300_000;
+/**
+ * Caps only the bare `bd dolt` fallback. The beads set's sync helper bounds its own attempts,
+ * and killing it mid-push would leave its `bd dolt push` holding the Dolt lock while this
+ * reports a failure for a push that may still land.
+ */
+const BARE_SYNC_TIMEOUT_MS = 300_000;
 
 function usage(people) {
   const known = personKeys(people).join(', ') || '(none configured: add handles to "people" in agent-tooling.json)';
@@ -118,7 +123,7 @@ export function parseBdJsonRows(raw) {
 function runSync(kind) {
   const haveHelper = existsSync(SYNC_HELPER);
   const [cmd, args] = haveHelper ? [process.execPath, [SYNC_HELPER, kind]] : ['bd', ['dolt', kind]];
-  const r = spawnSync(cmd, args, { stdio: 'inherit', timeout: SYNC_TIMEOUT_MS });
+  const r = spawnSync(cmd, args, { stdio: 'inherit', ...(haveHelper ? {} : { timeout: BARE_SYNC_TIMEOUT_MS }) });
   return { ok: r.status === 0 };
 }
 

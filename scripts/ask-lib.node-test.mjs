@@ -139,11 +139,25 @@ test('every registered actor base resolves back to its own person', () => {
 });
 
 test('agent/bot identities fold into the human who runs them', () => {
-  // scripts/agent-actor-id.mjs slugs "Alice Bot" to "alice-bot"; an agent session must land
-  // in alice's inbox, not nowhere. A longer base that starts with the handle does too.
-  assert.equal(resolvePerson({ env: {}, actorBase: 'alice-bot', people: PEOPLE })?.key, 'alice');
-  assert.equal(resolvePerson({ env: {}, actorBase: 'bob-laptop', people: PEOPLE })?.key, 'bob');
-  assert.equal(resolvePerson({ env: {}, actorBase: 'bobby', people: PEOPLE }), null, 'a prefix needs the dash');
+  // scripts/agent-actor-id.mjs slugs "Bob Bot" to "bob-bot"; an agent session must land in
+  // bob's inbox, not nowhere. bob lists no actorBases, so he gets <handle> and <handle>-bot.
+  assert.equal(resolvePerson({ env: {}, actorBase: 'bob-bot', people: PEOPLE })?.key, 'bob');
+  assert.equal(resolvePerson({ env: {}, actorBase: 'bob', people: PEOPLE })?.key, 'bob');
+  assert.equal(resolvePerson({ env: {}, actorBase: 'bobby', people: PEOPLE }), null);
+});
+
+test('actor bases match exactly: a base that only starts with a handle is someone else', () => {
+  // A prefix rule would route bob-jones (another contributor) into bob's inbox.
+  assert.equal(resolvePerson({ env: {}, actorBase: 'bob-jones', people: PEOPLE }), null);
+  assert.equal(resolvePerson({ env: {}, actorBase: 'bob-laptop', people: PEOPLE }), null);
+});
+
+test('a person who lists actorBases matches only those, not the handle defaults', () => {
+  const people = buildPeople(['carol'], { carol: { actorBases: ['night-owl', 'cjones'] } });
+  assert.deepEqual(people[0].actorBases, ['night-owl', 'cjones']);
+  assert.equal(resolvePerson({ env: {}, actorBase: 'night-owl', people })?.key, 'carol');
+  assert.equal(resolvePerson({ env: {}, actorBase: 'carol-smith', people }), null);
+  assert.equal(resolvePerson({ env: {}, actorBase: 'carol-bot', people }), null, 'not listed, so not matched');
 });
 
 test('git email is the fallback when there is no agent env at all', () => {

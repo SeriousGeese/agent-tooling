@@ -67,7 +67,8 @@ jobs:
             const fs = require("node:fs");
             const person = process.argv[1];
             let people = [];
-            try { people = JSON.parse(fs.readFileSync("agent-tooling.json", "utf8")).people ?? []; } catch {}
+            // An entry is a handle or a person object { handle, ... }.
+            try { people = (JSON.parse(fs.readFileSync("agent-tooling.json", "utf8")).people ?? []).map((p) => (typeof p === "string" ? p : p?.handle)).filter(Boolean); } catch {}
             if (!/^[a-z][a-z0-9-]*$/.test(person) || !people.includes(person)) {
               console.error("unknown person: " + person + " (known: " + (people.join(", ") || "none configured") + ")");
               process.exit(1);

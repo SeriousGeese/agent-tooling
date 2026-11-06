@@ -38,8 +38,8 @@
 //   * bd COERCES numeric-looking metadata values: `--set-metadata a=1` reads back as the JSON
 //     number 1, not "1". Everything here stringifies defensively.
 //
-// Who the people are comes from `people` in the consumer's agent-tooling.json (a list of
-// lower-case handles, read through agent-tooling-config.mjs). Every function that needs the
+// Who the people are comes from `people` in the consumer's agent-tooling.json (lower-case
+// handles or person objects with actorBases and emails, read through agent-tooling-config.mjs). Every function that needs the
 // list takes it as a parameter, so the logic is pure and testable without a file; when the
 // parameter is omitted the configured list is read once and cached. Nothing here calls bd,
 // touches the filesystem itself or exits the process. The bd-touching CLI is scripts/ask.mjs;
@@ -55,9 +55,10 @@ const clip = (text, limit) => {
  * Build the people registry from config handles.
  *
  * `actorBases` are slugified identity bases as produced by scripts/agent-actor-id.mjs
- * (slugifyActorBase), NOT display names. An agent session resolves to e.g. "alice" or
- * "alice-bot", so by default a handle matches itself and `<handle>-bot`; resolvePerson also
- * accepts any base that starts with `<handle>-`. `aliases` adds more, per handle:
+ * (slugifyActorBase), NOT display names, and they match EXACTLY: a prefix rule would hand
+ * `alice-jones` (someone else) to alice. A person given as a bare handle, with no actorBases,
+ * matches `<handle>` and `<handle>-bot`; a person who lists actorBases matches only those.
+ * `aliases` supplies them, per handle:
  * `{ alice: { actorBases: ['a-smith'], emails: ['alice@example.com'] } }`. Two handles
  * claiming one base would route an ask to whoever is listed first, so a base is kept by the
  * first handle that names it.
@@ -72,7 +73,8 @@ export function buildPeople(handles, aliases = {}) {
     const key = String(raw ?? '').trim().toLowerCase();
     if (!key || people.some((p) => p.key === key)) continue;
     const extra = aliases[key] ?? {};
-    const actorBases = [key, `${key}-bot`, ...(extra.actorBases ?? [])]
+    const listed = extra.actorBases ?? [];
+    const actorBases = (listed.length ? listed : [key, `${key}-bot`])
       .map((b) => String(b).trim().toLowerCase())
       .filter((b) => b && !seen.has(b));
     for (const b of actorBases) seen.add(b);
@@ -158,7 +160,7 @@ export function resolvePerson({ env = process.env, actorBase = '', gitEmail = ''
 
   const base = String(actorBase ?? '').trim().toLowerCase();
   if (base) {
-    const byBase = people.find((p) => p.actorBases.includes(base)) ?? people.find((p) => base.startsWith(`${p.key}-`));
+    const byBase = people.find((p) => p.actorBases.includes(base));
     if (byBase) return byBase;
   }
 
