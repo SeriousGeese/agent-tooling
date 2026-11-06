@@ -3,8 +3,11 @@
 //
 // Contract: plain text on STDOUT (that is what lands in the session's starting context),
 // and ALWAYS exit 0. A SessionStart hook cannot block anything, and this one must never be
-// the reason a session fails to start, so every failure path here is silent. No bd, unknown
-// person, corrupt DB, timeout, zero asks: print nothing.
+// the reason a session fails to start, so nearly every failure path here is silent. No bd,
+// unknown person, corrupt DB, timeout, zero asks: print nothing. The one exception is an
+// agent-tooling.json that exists but failed to load: with no routing table every ask would
+// look absent, so that prints a single [asks] line naming the reason (still exit 0). A
+// missing agent-tooling.json is not an error and stays silent.
 //
 // It runs exactly ONE bd call (about 0.7s). It deliberately does NOT `bd dolt pull`: that
 // would add network latency to every session start and put a write-path operation behind a
@@ -18,7 +21,7 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { resolveActorId } from '../agent-actor-id.mjs';
-import { askLabel, formatBanner, parseAsks, resolvePerson } from '../ask-lib.mjs';
+import { askLabel, defaultPeopleLoadError, formatBanner, parseAsks, resolvePerson } from '../ask-lib.mjs';
 
 // Short: a slow bd must not stall session start. bd invocations serialize on the embedded
 // Dolt lock, so a concurrent bd command elsewhere can make this wait.
@@ -70,10 +73,20 @@ function isMain() {
   }
 }
 
+/** The single diagnostic line for an agent-tooling.json that failed to load. */
+export function configErrorLine(reason) {
+  return `[asks] cannot read agent-tooling.json, so pending asks cannot be routed: ${String(reason).replace(/\s+/g, ' ').trim()}`;
+}
+
 if (isMain()) {
   try {
-    const banner = buildInboxBanner();
-    if (banner) process.stdout.write(`${banner}\n`);
+    const loadError = defaultPeopleLoadError();
+    if (loadError) {
+      process.stdout.write(`${configErrorLine(loadError)}\n`);
+    } else {
+      const banner = buildInboxBanner();
+      if (banner) process.stdout.write(`${banner}\n`);
+    }
   } catch {
     // Fail open, always and silently. See the header.
   }

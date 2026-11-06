@@ -171,12 +171,13 @@ async function load(file) {
   return import(pathToFileURL(file).href);
 }
 
-test('drift: the close-refusal pattern matches scripts/lib/bd-cli.mjs', async (t) => {
-  const file = sibling('lib', 'bd-cli.mjs');
-  if (!existsSync(file)) return t.skip('scripts/lib/bd-cli.mjs is not installed here');
-  const real = await load(file);
-  assert.equal(CLOSE_ASSIGNEE_REFUSAL_RE.source, real.CLOSE_ASSIGNEE_REFUSAL_RE.source);
-  assert.equal(closeRefusalAssignee(REFUSAL, 'x-1'), real.closeRefusalAssignee(REFUSAL, 'x-1'));
+test('every bd helper hygiene-bd-lib exposes is the one in scripts/lib/bd-cli.mjs (a re-export, not a copy)', async () => {
+  const hyg = await load(sibling('hygiene-bd-lib.mjs'));
+  const cli = await load(sibling('lib', 'bd-cli.mjs'));
+  for (const name of ['bd', 'bdJson', 'parseBdJsonRows', 'bdCloseAsAssignee', 'closeRefusalAssignee', 'CLOSE_ASSIGNEE_REFUSAL_RE', 'BD_TIMEOUT_MS', 'BD_MAX_BUFFER']) {
+    assert.ok(cli[name] !== undefined, `bd-cli exports ${name}`);
+    assert.equal(hyg[name], cli[name], `${name} must be the bd-cli export itself`);
+  }
 });
 
 test('drift: DISTINCT_ACTOR_RE and the name slug match scripts/agent-actor-id.mjs', async (t) => {
