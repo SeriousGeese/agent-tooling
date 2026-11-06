@@ -44,6 +44,33 @@ config loader and the node:test runner). Everything else is in a named set, chos
 
 `all` is every set; `none` is `base` alone. A set may be empty until its files move here.
 
+### The `hygiene` set
+
+Epic hygiene (`epic-hygiene.mjs`), the idea inbox (`idea-inbox.mjs`), the feature-idea recorder
+(`record-feature-idea.sh`) and the tooling-friction log (`oddity.mjs`, `oddity-lib.mjs`,
+`oddity-digest.mjs` and the two test stubs). The set is closed over `base`: its small bd, actor and
+dolt-sync plumbing lives in `hygiene-bd-lib.mjs`, which uses the `asks` and `beads` sets' scripts
+when they are installed beside it and falls back to `BEADS_ACTOR` and a bare `bd dolt pull|push`
+when they are not. Verified sync is the beads set's job: without it hygiene runs a bare
+`bd dolt pull|push` and prints a warning that the sync is NOT verified.
+
+The friction log reads `beadPrefix` and `people` from `agent-tooling.json` and takes these
+environment knobs (the prefix is rewritten on sync, so `AGENT_TOOLING_CHECKOUT` is `ACME_CHECKOUT`
+in a consumer whose `envPrefix` is `ACME_`):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AGENT_TOOLING_CHECKOUT` | none | The checkout whose beads database holds every repo's friction entries |
+| `AGENT_TOOLING_ODDITY_LABEL` | `tooling-oddity` | The label an entry carries |
+| `AGENT_TOOLING_ODDITY_ARCHIVE` | `docs/agents/tooling-oddities-archive.md` | The archive of resolved entries |
+| `AGENT_TOOLING_ODDITY_UPSTREAM` | `docs/agents/tooling-oddities-upstream.json` | The registry of workarounds tied to upstream issues |
+| `AGENT_TOOLING_ODDITY_REPOS` | none | Repos the digest always lists, even at zero entries |
+| `AGENT_TOOLING_ODDITY_SKIP_STALE_CHECK` | unset | `1` runs a CLI copy that is older than `origin/main` |
+
+The per-issue verify recipes behind `oddity.mjs verify` (`scripts/oddity-verify/<issue>.mjs`) and
+the tests that read a consumer's real archive, registry, inbox and workflow are consumer data and
+stay in the consumer.
+
 ## Adopting
 
 From the consumer's root, with any copy of the sync script (a first adoption can fetch it
