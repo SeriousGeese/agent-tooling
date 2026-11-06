@@ -38,7 +38,24 @@
       "scripts/dolt-resilient-pull.node-test.mjs",
       "scripts/lib/dolt-resilient-pull.sh"
     ],
-    "hygiene": [],
+    "hygiene": [
+      "scripts/epic-hygiene-lib.mjs",
+      "scripts/epic-hygiene.mjs",
+      "scripts/epic-hygiene.node-test.mjs",
+      "scripts/hygiene-bd-lib.mjs",
+      "scripts/hygiene-bd-lib.node-test.mjs",
+      "scripts/idea-inbox.mjs",
+      "scripts/idea-inbox.node-test.mjs",
+      "scripts/oddity-digest.mjs",
+      "scripts/oddity-digest.node-test.mjs",
+      "scripts/oddity-lib.mjs",
+      "scripts/oddity.mjs",
+      "scripts/oddity.node-test.mjs",
+      "scripts/record-feature-idea.sh",
+      "scripts/test-support/hygiene-temp-dir.mjs",
+      "scripts/test-support/oddity-bd-stub.mjs",
+      "scripts/test-support/oddity-gh-stub.mjs"
+    ],
     "worktree": [
       "scripts/claim-age.mjs",
       "scripts/claim-age.node-test.mjs",
@@ -74,7 +91,18 @@
       "scripts/pr-queue-state.node-test.mjs"
     ],
     "session": [],
-    "skills": [],
+    "skills": [
+      ".agents/skills/bead-chains/SKILL.md",
+      ".agents/skills/bead-workflow/SKILL.md",
+      ".agents/skills/bead-workflow/agents/openai.yaml",
+      ".agents/skills/beads-bulk/SKILL.md",
+      ".agents/skills/beads-hygiene/SKILL.md",
+      ".agents/skills/dependabot-handler/SKILL.md",
+      ".agents/skills/mvp-readiness/SKILL.md",
+      ".agents/skills/prompt-next-work/SKILL.md",
+      ".agents/skills/recurring-task/SKILL.md",
+      ".agents/skills/window-review/SKILL.md"
+    ],
     "docs": [],
     "ritual": []
   }
