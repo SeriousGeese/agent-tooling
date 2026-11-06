@@ -33,7 +33,7 @@ config loader and the node:test runner). Everything else is in a named set, chos
 | Set | Contents |
 |---|---|
 | `asks` | Routing a bead to a person for a decision: ask.mjs, the inbox banner, the actor id |
-| `beads` | The Dolt-backed beads sync toolkit |
+| `beads` | The Dolt-backed beads sync toolkit: verified pull/push (bd-dolt-sync), bd repo-churn guard, sync-remote drift check, resilient-pull shell lib |
 | `hygiene` | Epic hygiene, idea inbox, tooling-friction log |
 | `worktree` | claim.sh, worktree creation, removal, landing and session locks |
 | `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata |
