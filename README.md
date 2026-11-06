@@ -36,7 +36,7 @@ config loader and the node:test runner). Everything else is in a named set, chos
 | `beads` | The Dolt-backed beads sync toolkit |
 | `hygiene` | Epic hygiene, idea inbox, tooling-friction log |
 | `worktree` | claim.sh, worktree creation, removal, landing and session locks |
-| `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata |
+| `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata (and the parse-flags and gh-rate-limit helpers they import). Knobs: `AGENT_TOOLING_PR_WORKFLOW`, `AGENT_TOOLING_GATE_CHECK`, `pr-metadata --migrations-dir` |
 | `session` | Session phase and tracker, hooksPath repair |
 | `skills` | Process skills under `.agents/skills/` |
 | `docs` | The generic halves of the agent docs under `docs/agents/shared/` |
