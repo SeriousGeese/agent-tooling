@@ -27,7 +27,17 @@
       "scripts/hooks/ask-inbox.node-test.mjs",
       "templates/asks-inbox.yml"
     ],
-    "beads": [],
+    "beads": [
+      "scripts/bd-dolt-sync.mjs",
+      "scripts/bd-dolt-sync.node-test.mjs",
+      "scripts/bd-repo-guard.mjs",
+      "scripts/bd-repo-guard.node-test.mjs",
+      "scripts/check-beads-remote.mjs",
+      "scripts/check-beads-remote.node-test.mjs",
+      "scripts/dolt-resilient-pull.node-test.mjs",
+      "scripts/lib/dolt-resilient-pull.sh",
+      "scripts/test-support/cleanup.mjs"
+    ],
     "hygiene": [],
     "worktree": [],
     "gate": [
