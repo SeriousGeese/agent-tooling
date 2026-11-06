@@ -51,7 +51,8 @@ Epic hygiene (`epic-hygiene.mjs`), the idea inbox (`idea-inbox.mjs`), the featur
 `oddity-digest.mjs` and the two test stubs). The set is closed over `base`: its small bd, actor and
 dolt-sync plumbing lives in `hygiene-bd-lib.mjs`, which uses the `asks` and `beads` sets' scripts
 when they are installed beside it and falls back to `BEADS_ACTOR` and a bare `bd dolt pull|push`
-when they are not.
+when they are not. Verified sync is the beads set's job: without it hygiene runs a bare
+`bd dolt pull|push` and prints a warning that the sync is NOT verified.
 
 The friction log reads `beadPrefix` and `people` from `agent-tooling.json` and takes these
 environment knobs (the prefix is rewritten on sync, so `AGENT_TOOLING_CHECKOUT` is `ACME_CHECKOUT`
@@ -61,8 +62,8 @@ in a consumer whose `envPrefix` is `ACME_`):
 |---|---|---|
 | `AGENT_TOOLING_CHECKOUT` | none | The checkout whose beads database holds every repo's friction entries |
 | `AGENT_TOOLING_ODDITY_LABEL` | `tooling-oddity` | The label an entry carries |
-| `AGENT_TOOLING_ODDITY_ARCHIVE` | `docs/agents/oddity-archive.md` | The archive of resolved entries |
-| `AGENT_TOOLING_ODDITY_UPSTREAM` | `docs/agents/oddity-upstream.json` | The registry of workarounds tied to upstream issues |
+| `AGENT_TOOLING_ODDITY_ARCHIVE` | `docs/agents/tooling-oddities-archive.md` | The archive of resolved entries |
+| `AGENT_TOOLING_ODDITY_UPSTREAM` | `docs/agents/tooling-oddities-upstream.json` | The registry of workarounds tied to upstream issues |
 | `AGENT_TOOLING_ODDITY_REPOS` | none | Repos the digest always lists, even at zero entries |
 | `AGENT_TOOLING_ODDITY_SKIP_STALE_CHECK` | unset | `1` runs a CLI copy that is older than `origin/main` |
 

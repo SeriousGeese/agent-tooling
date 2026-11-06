@@ -10,9 +10,9 @@
 //
 // Read-only by default on every mode: nothing mutates without --apply.
 //
-// SAFETY — bd's "last touched issue" fallback:
+// SAFETY, bd's "last touched issue" fallback:
 // `bd update`/`bd close` with no ID operate on the last touched issue, which is
-// NOT scoped to this session — a concurrent agent's bd call can become "last
+// NOT scoped to this session, a concurrent agent's bd call can become "last
 // touched" between two of ours. Every mutating call below therefore refuses an
 // empty/placeholder ID rather than letting it through.
 
@@ -58,9 +58,9 @@ Options
 }
 
 function bd(args, { capture = true } = {}) {
-  // Honour $BD_CLI via bdCli() (one lookup, not a second reimplementation) so a Windows box — where `bd` is an extensionless winget shim that
-  // CreateProcess cannot start directly — can point at the real binary and avoid the shell
-  // entirely. Without this the sanctioned `node scripts/epic-hygiene.mjs audit` died on an
+  // Honour $BD_CLI via bdCli() (one lookup, not a second reimplementation) so a Windows
+  // box (where `bd` can be an extensionless shim that CreateProcess cannot start directly)
+  // can point at the real binary and avoid the shell entirely. Without this the sanctioned `node scripts/epic-hygiene.mjs audit` died on an
   // unhandled ENOENT in loadRows() on the primary dev machine.
   const cli = bdCli();
   const r = spawnWithShellFallback(cli, args, {
@@ -81,7 +81,7 @@ function bd(args, { capture = true } = {}) {
   return r.stdout;
 }
 
-/** Guard against bd's last-touched fallback — never let a blank ID reach a mutation. */
+/** Guard against bd's last-touched fallback, never let a blank ID reach a mutation. */
 function requireId(id, action) {
   if (typeof id !== 'string' || id.trim() === '' || id.startsWith(NEW_EPIC_PREFIX)) {
     throw new Error(`refusing to run ${action} with an unresolved id (${JSON.stringify(id)})`);
@@ -91,7 +91,7 @@ function requireId(id, action) {
 
 function loadRows() {
   // Bare `bd export` goes to stdout. Do NOT reach for `-o -`: bd treats that as a
-  // literal filename and silently writes a file called `-`, leaving stdout empty —
+  // literal filename and silently writes a file called `-`, leaving stdout empty -
   // which this planner would otherwise read as a perfectly clean tracker.
   const out = bd(['export']);
   const rows = out
@@ -130,7 +130,7 @@ function applyAction(action, resolved) {
       if (action.newParent?.startsWith(NEW_EPIC_PREFIX) && !parent) {
         throw new Error(`unresolved new-epic key ${action.newParent} for ${id}`);
       }
-      // Empty string is bd's documented "remove parent" — top-level is a real target.
+      // Empty string is bd's documented "remove parent", top-level is a real target.
       bd(['update', id, '--parent', parent ?? '']);
       return `reparented ${id} -> ${parent ?? '(top level)'}`;
     }

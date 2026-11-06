@@ -2,7 +2,7 @@
 // A stand-in for `bd`, for scripts/oddity.node-test.mjs only (wired through the CLI's
 // ODDITY_BD_STUB seam). It keeps a tiny JSON "database" at $ODDITY_STUB_DB so the
 // cross-repo test can file entries from three different repos and then list them
-// back — without a Dolt database, a network, or a single real bead.
+// back, without a Dolt database, a network, or a single real bead.
 //
 // It understands exactly what scripts/oddity.mjs sends: the global `-C <dir>` and
 // `--actor <id>`, `dolt pull|push`, `create <title> … --labels a,b --silent`, and

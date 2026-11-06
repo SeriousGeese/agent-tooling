@@ -194,7 +194,7 @@ test('repairMsysMangledTitle leaves an ordinary title completely alone', () => {
 
 // The session's own AGENT_TOOLING_CHECKOUT / stub must never leak into a test: each test states
 // the store it means. The self-staleness guard is skipped by default so
-// these tests stay hermetic — run from a worktree legitimately behind main, every CLI
+// these tests stay hermetic, run from a worktree legitimately behind main, every CLI
 // case would otherwise fail with a staleness refusal instead of what it asserts; the
 // guard has its own fixture-repo tests below that unset the skip explicitly.
 function cleanEnv(extra = {}) {
@@ -209,7 +209,7 @@ function run(args, cwd, extraEnv = {}, bin = cli) {
 }
 
 // Every file the CLI imports, so a store checkout can carry a copy that runs from inside it.
-const CLI_FILES = [...SELF_CHECK_FILES, 'scripts/hygiene-bd-lib.mjs', 'scripts/agent-tooling-config.mjs'];
+const CLI_FILES = [...SELF_CHECK_FILES, 'scripts/agent-tooling-config.mjs'];
 
 /**
  * Give a fixture store its own copy of the CLI. This is how the CLI is used across repos
@@ -225,8 +225,8 @@ function installCli(root) {
   return path.join(root, 'scripts', 'oddity.mjs');
 }
 
-// A throwaway git repo holding a small archive and a .beads dir — a store checkout as
-// far as the CLI can tell — so it resolves ARCHIVE_REL against it, not the real repo.
+// A throwaway git repo holding a small archive and a .beads dir, a store checkout as
+// far as the CLI can tell, so it resolves ARCHIVE_REL against it, not the real repo.
 function fixture(root = mkdtempSync(path.join(tmpdir(), 'oddity-test-'))) {
   mkdirSync(root, { recursive: true });
   spawnSync('git', ['init', '-q', root]);
@@ -755,7 +755,7 @@ test('`upstream --json` on a runner: GH_TOKEN reaches gh, GITHUB_TOKEN does not,
   }
 });
 
-// ── `oddity.mjs verify` — a runnable verdict instead of prose ──
+// ── `oddity.mjs verify`, a runnable verdict instead of prose ──
 
 test('verdictNameForExit / verdictSymbolForExit: the three named verdicts, anything else is an error, never silently retirable', () => {
   assert.equal(verdictNameForExit(VERIFY_EXIT.RETIRABLE), 'RETIRABLE');
@@ -796,7 +796,7 @@ test('renderUpstream prints a `verify:` pointer under a RETIRE line only when th
 });
 
 // A fixture store checkout with its own upstream registry pointing at STUB verify
-// scripts (never the real .mjs recipes — those are exercised in
+// scripts (never the real .mjs recipes, those are exercised in
 // scripts/oddity-verify.node-test.mjs without ever going through the Bash tool's
 // command-text channel). One stub per verdict, plus a crashing one.
 function verifyFixture() {
@@ -840,7 +840,7 @@ test('`verify <issue>` runs that entry\'s script and prints its one-line verdict
     assert.equal(manual.status, VERIFY_EXIT.NEEDS_MANUAL);
     assert.match(manual.stdout, /^○ NEEDS-MANUAL {2}anthropics\/claude-code#1003 — manual stub$/m);
 
-    // Node's own default for an uncaught exception is exit 1 — the same number
+    // Node's own default for an uncaught exception is exit 1, the same number
     // this scheme uses for STILL-REPRODUCES (following the bead's own suggested
     // mapping). The two are not required to be distinguishable by exit code
     // alone; what matters, and what the bead's own phrasing requires ("script
@@ -980,7 +980,7 @@ function gitIn(root, args) {
 /**
  * A throwaway bd-shaped checkout carrying its own copy of the CLI: v1 committed,
  * then v2 (a trailing marker appended to every SELF_CHECK_FILE) committed and
- * installed as the LOCAL `origin/main` ref — the exact thing the guard compares
+ * installed as the LOCAL `origin/main` ref, the exact thing the guard compares
  * against. The disk starts at v2 (current); tests then move it where they need it.
  */
 function staleCliFixture() {
@@ -1016,7 +1016,7 @@ function runFixtureCli(root, args, extraEnv = {}) {
 test('a stale CLI copy REFUSES every command with the remedy; the escape hatch runs it anyway', () => {
   const { root, v1 } = staleCliFixture();
   try {
-    // Older committed version on disk while origin/main knows v2 — the sibling-primary shape.
+    // Older committed version on disk while origin/main knows v2, the sibling-primary shape.
     gitIn(root, ['checkout', '-q', v1, '--', ...SELF_CHECK_FILES]);
     const r = runFixtureCli(root, ['next-number'], { [SKIP_STALE_ENV]: undefined });
     assert.equal(r.status, 1);
@@ -1068,8 +1068,8 @@ test('the oddity label is the named default, and AGENT_TOOLING_ODDITY_LABEL over
 
 test('the archive and registry paths have neutral defaults, each overridable from the environment', () => {
   const base = libWithEnv({});
-  assert.equal(base.ARCHIVE_REL, 'docs/agents/oddity-archive.md');
-  assert.equal(base.UPSTREAM_REL, 'docs/agents/oddity-upstream.json');
+  assert.equal(base.ARCHIVE_REL, 'docs/agents/tooling-oddities-archive.md');
+  assert.equal(base.UPSTREAM_REL, 'docs/agents/tooling-oddities-upstream.json');
   const over = libWithEnv({ AGENT_TOOLING_ODDITY_ARCHIVE: 'notes/arch.md', AGENT_TOOLING_ODDITY_UPSTREAM: 'notes/up.json' });
   assert.equal(over.ARCHIVE_REL, 'notes/arch.md');
   assert.equal(over.UPSTREAM_REL, 'notes/up.json');

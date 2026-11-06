@@ -4,7 +4,7 @@
 // into ONE tracking issue. The workflow stays thin (gather JSON, call this, post it);
 // everything that decides what the issue SAYS lives here, where node:test can reach it.
 //
-//   node scripts/oddity-digest.mjs --registry docs/agents/oddity-upstream.json \
+//   node scripts/oddity-digest.mjs --registry docs/agents/tooling-oddities-upstream.json \
 //     [--upstream-json <file>]              output of `node scripts/oddity.mjs upstream --json`
 //     [--oddities-json <file>]              output of `bd list -l tooling-oddity --flat -n 0 --json`
 //     [--closed-json <file>]                the same listing with `--status closed`; with --archive,
@@ -51,7 +51,7 @@ export function daysSince(date, today) {
 /**
  * The staleness line: days since the registry was last stamped by `upstream --write`.
  * lastChecked only moves when a sweep runs that AND commits it, so this is really
- * "days since the last sweep checked upstream" — the cron does not stamp it (it has no
+ * "days since the last sweep checked upstream", the cron does not stamp it (it has no
  * business committing to main), which is exactly why the number is worth printing.
  */
 export function stalenessLine(registry, today) {
@@ -187,7 +187,7 @@ export function renderInboxSection(files, inboxRel) {
 /**
  * Closed entries the archive does not mention. close-beads closes an entry
  * the moment its PR merges; only the sweep archives it, and the sweep's `list` input
- * is open beads — so between sweeps this backlog is invisible everywhere but here.
+ * is open beads, so between sweeps this backlog is invisible everywhere but here.
  * `closed` null = the listing was not produced; `archiveText` null = no archive given.
  */
 export function renderUnarchivedSection({ closed, archiveText, today }) {
@@ -224,7 +224,7 @@ export function renderDigest({ registry, upstream, oddities, closed = null, arch
     ...(inboxFiles.length ? [`parked ${inboxFiles.length}`] : []),
   ].join(' · ');
   const body = [
-    `Tooling friction check for **${today}** — ${summary}`,
+    `Tooling-oddities check for **${today}** — ${summary}`,
     ...(runUrl ? ['', runUrl] : []),
     '',
     stalenessLine(registry, today),
@@ -256,7 +256,7 @@ function parseCli(argv) {
   return flags;
 }
 
-/** Read a JSON file, or null when it is missing, empty or unparseable — the renderer says so instead of crashing the report. */
+/** Read a JSON file, or null when it is missing, empty or unparseable, the renderer says so instead of crashing the report. */
 function readJsonOrNull(p) {
   if (!p || !existsSync(p)) return null;
   try {

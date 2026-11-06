@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Tests for the pure planner in scripts/epic-hygiene-lib.mjs.
 // The lib takes `bd export` rows and returns a plan, so every case here is
-// expressed as fixture rows in bd's real export shape — the parent edge lives on
+// expressed as fixture rows in bd's real export shape, the parent edge lives on
 // the CHILD row as { issue_id, depends_on_id, type: 'parent-child' }.
 
 import { strict as assert } from 'node:assert';
@@ -96,7 +96,7 @@ test('resolveParents ignores non-hierarchy dependency types', () => {
 test('isDeferred covers hard status and soft future-dated open', () => {
   assert.equal(isDeferred(issue('a', { status: 'deferred' }), NOW), true);
   assert.equal(isDeferred(issue('b', { defer_until: '2027-01-01T00:00:00Z' }), NOW), true);
-  // A past date on an OPEN bead is not parked — it is plain backlog again.
+  // A past date on an OPEN bead is not parked, it is plain backlog again.
   assert.equal(isDeferred(issue('c', { defer_until: '2026-01-01T00:00:00Z' }), NOW), false);
   assert.equal(isDeferred(issue('d'), NOW), false);
   // Closed always wins, even carrying a future date.
@@ -132,7 +132,7 @@ test('an in_progress child with a future date blocks the close instead of being 
 });
 
 test('an in_progress GRANDCHILD keeps its parked parent from being evicted', () => {
-  // subtreeHasLiveWork reaches the claim through a parked intermediate epic — the
+  // subtreeHasLiveWork reaches the claim through a parked intermediate epic, the
   // grandchild-recursion shape, now with the status/date interaction underneath it.
   const rows = [
     issue('E', { issue_type: 'epic', title: 'The Epic' }),
@@ -148,7 +148,7 @@ test('expired and dateless deferrals are recognised only for hard-deferred beads
   assert.equal(isExpiredDeferral(issue('a', { status: 'deferred', defer_until: '2026-07-22T00:00:00Z' }), NOW), true);
   assert.equal(isExpiredDeferral(issue('b', { status: 'deferred', defer_until: '2027-07-22T00:00:00Z' }), NOW), false);
   assert.equal(isExpiredDeferral(issue('c', { status: 'deferred' }), NOW), false);
-  // An OPEN bead with a passed date is not a stuck deferral — bd ready shows it.
+  // An OPEN bead with a passed date is not a stuck deferral, bd ready shows it.
   assert.equal(isExpiredDeferral(issue('d', { defer_until: '2026-07-22T00:00:00Z' }), NOW), false);
 
   assert.equal(isDatelessDeferral(issue('e', { status: 'deferred' })), true);
@@ -276,7 +276,7 @@ test('a new epic is never born already-expired, whatever its children carry', ()
   // Observed for real: an epic inherited a child's date that had passed days
   // earlier and was expired the moment it existed, so the very
   // next sweep flipped it straight back open. The invariant is simply that a
-  // created epic never carries a date already in the past — reached here by the
+  // created epic never carries a date already in the past, reached here by the
   // born-open rule, with the clamp in inheritedDeferDate as defence in depth.
   const cases = [
     ['2026-08-18T00:00:00Z', '2027-03-01T00:00:00Z'], // one expired, one future
@@ -294,7 +294,7 @@ test('a new epic is never born already-expired, whatever its children carry', ()
       create.deferUntil === null || create.deferUntil > deferDateFrom(NOW, 0),
       `${d1}/${d2} -> ${create.deferUntil} is already in the past`,
     );
-    // And a dated epic is deferred, an undated one is open — never a dateless freeze.
+    // And a dated epic is deferred, an undated one is open, never a dateless freeze.
     assert.equal(create.status, create.deferUntil === null ? 'open' : 'deferred');
   }
 });
@@ -323,7 +323,7 @@ test('a new epic is deferred when every child stays parked', () => {
 
 test('resolveText swaps placeholders literally, including at a sentence end', () => {
   const resolved = new Map([['NEW_EPIC:bd-aaa11', 'bd-bbb22']]);
-  // The note text ends "-> NEW_EPIC:bd-aaa11." — a greedy /NEW_EPIC:([\w.-]+)/
+  // The note text ends "-> NEW_EPIC:bd-aaa11.", a greedy /NEW_EPIC:([\w.-]+)/
   // swallows that final period and the lookup misses, which is how a real
   // sweep shipped "-> NEW_EPIC:bd-aaa11" into an epic's notes.
   assert.equal(resolveText('moved -> NEW_EPIC:bd-aaa11.', resolved), 'moved -> bd-bbb22.');
@@ -394,7 +394,7 @@ test('--split-standalone moves every child out individually and creates no epic'
 });
 
 test('no planned action leaks a NEW_EPIC placeholder into text the CLI cannot resolve', () => {
-  // The origin's note and close reason DO carry the placeholder by design — the
+  // The origin's note and close reason DO carry the placeholder by design, the
   // CLI swaps it once bd mints the id. What must never happen is a placeholder
   // surviving in a bead that is not the origin, where nothing would resolve it.
   const rows = [
@@ -438,7 +438,7 @@ test('spreadOffsetDays is deterministic, in range, and id-sensitive', () => {
     const n = spreadOffsetDays(id);
     assert.ok(Number.isInteger(n) && n >= 0 && n < 60, `${id} -> ${n}`);
   }
-  // Different ids must not all collapse onto one day — that is the whole point.
+  // Different ids must not all collapse onto one day, that is the whole point.
   const spread = new Set(Array.from({ length: 200 }, (_, i) => spreadOffsetDays(`bd-x${i}`)));
   assert.ok(spread.size > 30, `expected a wide spread, got ${spread.size} distinct offsets`);
 });
@@ -640,7 +640,7 @@ test('Rule 1b does not nominate an epic whose parked child hides live grandchild
     childOf('E.31', 'E', { issue_type: 'epic', status: 'open', defer_until: '2026-12-01T00:00:00Z' }),
     childOf('E.31.1', 'E.31', { status: 'in_progress' }),
   ];
-  // The parked child blocks the close instead of being evicted — evicting it would
+  // The parked child blocks the close instead of being evicted, evicting it would
   // file live work under a "deferred follow-ups" epic and mark it deferred.
   const plan = planEpicEviction('E', rows, NOW);
   assert.deepEqual(plan.blockedBy.map((r) => r.id), ['E.31']);
@@ -654,7 +654,7 @@ test('Rule 1b does not nominate an epic whose parked child hides live grandchild
 
 test('a soft-deferred (open + future date) child with no live descendants still evicts', () => {
   // Acceptance point 3: the future-dated OPEN child must STAY classified as parked
-  // when its own subtree is empty — a regression here would re-hide that epic.
+  // when its own subtree is empty, a regression here would re-hide that epic.
   const rows = [
     issue('E', { issue_type: 'epic', status: 'open', title: 'The Epic' }),
     childOf('E.1', 'E', { status: 'closed' }),

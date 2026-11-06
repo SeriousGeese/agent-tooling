@@ -1,4 +1,4 @@
-// Pure helpers behind scripts/oddity.mjs — the tooling-friction filing CLI.
+// Pure helpers behind scripts/oddity.mjs, the tooling-friction filing CLI.
 // Nothing here touches the process, the filesystem or `bd`; scripts/oddity.node-test.mjs
 // tests these directly and drives the CLI only in --dry-run mode (or against a stub bd).
 import path from 'node:path';
@@ -12,7 +12,7 @@ export const LABEL = process.env.AGENT_TOOLING_ODDITY_LABEL || ODDITY_LABEL_DEFA
 /** Added on top of LABEL for a recurrence of an archived entry. */
 export const RECURRENCE_LABEL = 'recurrence';
 /** The archive lives in the repo, at this path (env AGENT_TOOLING_ODDITY_ARCHIVE overrides it). */
-export const ARCHIVE_REL = process.env.AGENT_TOOLING_ODDITY_ARCHIVE || 'docs/agents/oddity-archive.md';
+export const ARCHIVE_REL = process.env.AGENT_TOOLING_ODDITY_ARCHIVE || 'docs/agents/tooling-oddities-archive.md';
 
 const HEADER_RE = /^## (\d+)\.\s+(.*)$/;
 // Bead ids as the repo's beadPrefix spells them (any prefix when it set none).
@@ -107,7 +107,7 @@ export function buildCreateArgs({ title, description, priority, recurrence = fal
 
 /**
  * argv for `bd list` over the active log, optionally narrowed to one origin repo.
- * `status` widens it past bd's default (open) — `closed` is what `unarchived` needs.
+ * `status` widens it past bd's default (open), `closed` is what `unarchived` needs.
  */
 export function buildListArgs({ repo = '', json = false, bdDir = '', status = '' } = {}) {
   const args = [...bdDirArgs(bdDir), 'list', '-l', LABEL];
@@ -120,11 +120,10 @@ export function buildListArgs({ repo = '', json = false, bdDir = '', status = ''
 
 // ── Closed by a PR, never archived ───────────────────────────────
 // close-beads closes an oddity bead the moment its fixing PR merges, which is the
-// intended path — but only the weekly sweep writes the archive, and the sweep's
+// intended path, but only the weekly sweep writes the archive, and the sweep's
 // input (`list`) is bd's default listing: OPEN beads. So an entry fixed between two
 // sweeps left the sweep's input before the sweep ever saw it, and its Resolution
-// block was never written: 53 of them between 2026-09-05 and 2026-09-13, with the
-// archive still ending at entry 75. The archive is what the docs cite and what a
+// block was never written, so the archive silently fell behind. The archive is what the docs cite and what a
 // recurrence is checked against, so this is the loop silently losing its output.
 // `unarchived` is the query that makes the backlog visible: closed entries whose id
 // the archive does not mention.
@@ -134,7 +133,7 @@ export function archivedBeadIds(archiveText) {
   return new Set(String(archiveText ?? '').match(BEAD_ID_RE) ?? []);
 }
 
-/** The PR number a close-beads close reason names (`Auto-closed: merged via PR #3169 (…)`), or null. */
+/** The PR number a close-beads close reason names (`Auto-closed: merged via PR #<n> (…)`), or null. */
 export function closingPrNumber(row) {
   const m = /\bPR #(\d+)/.exec(String(row?.close_reason ?? row?.closeReason ?? ''));
   return m ? Number(m[1]) : null;
@@ -216,10 +215,10 @@ export const CHECKOUT_ENV = 'AGENT_TOOLING_CHECKOUT';
 /**
  * Where the friction store lives for this invocation.
  *
- *   local   — the caller's repo root IS a store checkout or worktree: behave exactly as
+ *   local  , the caller's repo root IS a store checkout or worktree: behave exactly as
  *             before this change (no `-C`; archive and registry under that root).
- *   env     — $AGENT_TOOLING_CHECKOUT names a store checkout; every bd call runs `bd -C` there.
- *   sibling — no $AGENT_TOOLING_CHECKOUT, but `<caller root>/../<siblingName>` is one (siblingName is the repo's beadPrefix).
+ *   env    , $AGENT_TOOLING_CHECKOUT names a store checkout; every bd call runs `bd -C` there.
+ *   sibling, no $AGENT_TOOLING_CHECKOUT, but `<caller root>/../<siblingName>` is one (siblingName is the repo's beadPrefix).
  *
  * A set-but-wrong $AGENT_TOOLING_CHECKOUT is an error even when a sibling would resolve: an
  * explicit setting that silently loses to a guess is how an entry lands in the wrong
@@ -250,8 +249,8 @@ function storeCheckoutError({ callerRoot, explicit, sibling }) {
 
 // ── Self-staleness ────────────────────────────────────────────────
 //
-// The cross-repo recipe resolves the CLI in a sibling store checkout — usually the PRIMARY
-// checkout, which nothing keeps current (it sat 25 commits behind with an oddity.mjs
+// The cross-repo recipe resolves the CLI in a sibling store checkout, usually the PRIMARY
+// checkout, which nothing keeps current (one sat many commits behind with an oddity.mjs
 // that predated `--repo`: `list` exited 1 with no output and `new` silently dropped
 // the repo: label). Any worktree behind main has the same problem. A stale CLI cannot
 // know it is stale unless taught, so the CLI classifies its OWN files against the
@@ -260,19 +259,19 @@ function storeCheckoutError({ callerRoot, explicit, sibling }) {
 // session's worktree-new/refresh fetches it, so on this fleet it tracks GitHub closely
 // without the CLI paying a network round-trip per invocation.
 
-/** The files whose behavior IS the CLI — a change to either is a behavior change. */
-export const SELF_CHECK_FILES = ['scripts/oddity.mjs', 'scripts/oddity-lib.mjs'];
+/** The files whose behavior IS the CLI. A change to any of them is a behavior change. */
+export const SELF_CHECK_FILES = ['scripts/oddity.mjs', 'scripts/oddity-lib.mjs', 'scripts/hygiene-bd-lib.mjs'];
 
 export const SKIP_STALE_ENV = 'AGENT_TOOLING_ODDITY_SKIP_STALE_CHECK';
 
 /**
  * Verdict for one running CLI file:
- *   current  — disk blob equals origin/main's: identical content, identical behavior.
- *   stale    — disk blob equals an OLDER committed version on origin/main's history:
+ *   current , disk blob equals origin/main's: identical content, identical behavior.
+ *   stale   , disk blob equals an OLDER committed version on origin/main's history:
  *              refuse, this is the silently-misbehaving case.
- *   modified — matches neither: an in-development or locally edited copy. Allowed —
+ *   modified, matches neither: an in-development or locally edited copy. Allowed -
  *              refusing here would block working on the CLI itself.
- *   unknown  — git could not answer (no repo, no origin/main ref): fail OPEN, a
+ *   unknown , git could not answer (no repo, no origin/main ref): fail OPEN, a
  *              copy outside a checkout must still work.
  */
 export function classifySelfVersion({ diskHash, tipHash, historicalHashes = [] }) {
@@ -282,7 +281,7 @@ export function classifySelfVersion({ diskHash, tipHash, historicalHashes = [] }
   return 'modified';
 }
 
-/** The refusal text: what happened, the remedy, and the escape hatch — never silent. */
+/** The refusal text: what happened, the remedy, and the escape hatch, never silent. */
 export function staleCliMessage({ scriptRoot, rel }) {
   return [
     `!! STALE oddity CLI: ${path.join(scriptRoot, rel)} is an OLDER committed version than origin/main.`,
@@ -300,7 +299,7 @@ const BOOLEAN_FLAGS = new Set(['dry-run', 'json', 'help', 'write']);
 
 /**
  * Minimal argv parser: `cmd positionals… --flag value --bool`. Unknown flags and
- * short flags throw rather than being swallowed into the title — `new -p P2 "t"`
+ * short flags throw rather than being swallowed into the title, `new -p P2 "t"`
  * must not file a P3 bead titled `-p P2 t`.
  */
 export function parseArgs(argv) {
@@ -344,7 +343,7 @@ export function today() {
 // No error, no warning; the CLI reports success and the corrupted title is what the
 // active log, `bd list` and the weekly sweep show from then on. Every earlier
 // instance of this class was a path-shaped argument, where an agent is at
-// least thinking about paths — here it is prose, so nothing cues the check, and the
+// least thinking about paths, here it is prose, so nothing cues the check, and the
 // damage lands in shared durable state. A repo with slash commands steers straight into
 // it: a bead ABOUT one (`/bead`, `/asks`) naturally opens with its name. Reproduced independently with
 // `bd create "/conditions/ renders SRD prose publicly…"`.
@@ -361,7 +360,7 @@ const MSYS_MANGLED_TITLE_RE = /^[A-Za-z]:[\\/](?:[^\\/]+[\\/])*Git[\\/](?=\S)/;
  * Undo the mangle when a title carries its fingerprint.
  *
  * Returns `{ title, repaired, original }`. Repair rather than rejection, because the
- * original is unambiguous — a leading `/` is the only thing that produces this — and a
+ * original is unambiguous, a leading `/` is the only thing that produces this, and a
  * rejection makes the filer retype prose they already wrote. The caller MUST still say
  * so loudly: a silent repair is the same failure mode as the silent corruption, one
  * layer along. A title that legitimately begins with the Git install root does not
@@ -378,10 +377,10 @@ export function repairMsysMangledTitle(rawTitle) {
 // Workarounds that exist only because of an upstream (Claude Code) defect, keyed
 // to the issue that would make them unnecessary. The sweep checks the issue state
 // each week and retires the workaround once it closes AND the verify recipe
-// passes — an unretired workaround is a guard that blocks legitimate commands
+// passes, an unretired workaround is a guard that blocks legitimate commands
 // for a bug that no longer exists.
 
-export const UPSTREAM_REL = process.env.AGENT_TOOLING_ODDITY_UPSTREAM || 'docs/agents/oddity-upstream.json';
+export const UPSTREAM_REL = process.env.AGENT_TOOLING_ODDITY_UPSTREAM || 'docs/agents/tooling-oddities-upstream.json';
 
 export const upstreamKey = (e) => `${e.repo}#${e.issue}`;
 
@@ -399,11 +398,11 @@ export function ghChildEnv(env) {
   return out;
 }
 
-// ── `oddity.mjs verify` — a runnable verdict instead of prose ──
+// ── `oddity.mjs verify`, a runnable verdict instead of prose ──
 // `verifyBeforeRetiring` above is English a human reads and acts on; the four
 // current entries all test HARNESS behaviour (the Bash tool's `\\` collapse, its
 // >8 KB command truncation, `preview_start` cwd resolution, harness-worktree
-// CRLF) that is observable only from inside a live Claude Code desktop session —
+// CRLF) that is observable only from inside a live Claude Code desktop session -
 // never from a GitHub runner, never reliably from a cloud session. So a cron
 // cannot answer "retirable yes/no" on its own; what it CAN do is turn "read this
 // paragraph and judge" into a command with an exit code, so a sweep runs
@@ -414,14 +413,14 @@ export function ghChildEnv(env) {
 /**
  * Exit codes a verify script (scripts/oddity-verify/<issue>.mjs) and the
  * `oddity.mjs verify` CLI both use. 0 is the only "safe to retire" answer;
- * everything else means the workaround stays. NEEDS_MANUAL is not a failure —
+ * everything else means the workaround stays. NEEDS_MANUAL is not a failure -
  * some of these recipes genuinely cannot be judged by one process alone (a
  * fan-out subagent check, a cross-session durable record that does not exist
- * yet) — it just means a human or a further agent step must supply the missing
+ * yet), it just means a human or a further agent step must supply the missing
  * fact before a verdict is possible.
  *
  * Note: Node's own default exit code for an uncaught exception is 1, the same
- * number this scheme gives STILL_REPRODUCES — so a verify script that crashes is
+ * number this scheme gives STILL_REPRODUCES, so a verify script that crashes is
  * not always distinguishable from one that deliberately reported the bug as
  * still present. That is an accepted tradeoff, not a bug: what a caller (and the
  * sweep) must never do is treat ANY exit code but 0 as safe to retire, and a
@@ -455,7 +454,7 @@ export function verdictSymbolForExit(exitCode) {
   return VERDICT_SYMBOL[exitCode] ?? '!';
 }
 
-/** The one-line verdict `oddity.mjs verify` prints per entry — no prose to interpret. */
+/** The one-line verdict `oddity.mjs verify` prints per entry, no prose to interpret. */
 export function formatVerifyLine(entry, exitCode) {
   return `${verdictSymbolForExit(exitCode)} ${verdictNameForExit(exitCode)}  ${upstreamKey(entry)} — ${entry.title}`;
 }

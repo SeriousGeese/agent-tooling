@@ -7,7 +7,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { INBOX_LABEL, addIdea, formatIdeaNote, missingAsks, parseArgs, pickInbox } from './idea-inbox.mjs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { INBOX_LABEL, actorArgs, addIdea, configuredHandles, formatIdeaNote, missingAsks, parseArgs, pickInbox, raiseAsk } from './idea-inbox.mjs';
+import { removeTempDir } from './test-support/hygiene-temp-dir.mjs';
 
 /** Fake bd + sync: `lists` is consumed one per list() call; every write is recorded in `calls`. */
 function fakeDeps({ pulls = [true, true], pushes = [true, true], lists = [[]], createId = 'bd-mine' } = {}) {
@@ -116,4 +121,36 @@ test('parseArgs reads the idea and --source', () => {
     source: 'bd-1',
     json: false,
   });
+});
+
+test('configuredHandles reads plain handles and object entries alike, so askLabel never sees an object', () => {
+  assert.deepEqual(configuredHandles({ people: ['ann', { handle: 'bob', display: 'Bob', emails: ['b@x.test'] }] }), ['ann', 'bob']);
+  assert.deepEqual(configuredHandles({ people: [] }), []);
+  const row = { labels: [INBOX_LABEL, 'ask-ann'] };
+  assert.deepEqual(missingAsks(row, configuredHandles({ people: ['ann', { handle: 'bob' }] })), ['bob']);
+});
+
+test('actorArgs omits the flag entirely for an empty actor', () => {
+  assert.deepEqual(actorArgs('ann-bot-12345678'), ['--actor', 'ann-bot-12345678']);
+  assert.deepEqual(actorArgs(''), []);
+  assert.deepEqual(actorArgs(undefined), []);
+});
+
+test('raiseAsk: a missing ask.mjs warns and returns (so add still exits 0); a present one runs; a failing one throws', () => {
+  const warnings = [];
+  const never = () => assert.fail('must not run');
+  assert.equal(raiseAsk('x-1', 'ann', { script: path.join(tmpdir(), 'no-such-ask.mjs'), run: never, warn: (l) => warnings.push(l) }), false);
+  assert.match(warnings[0], /ask\.mjs is not installed/);
+
+  const dir = mkdtempSync(path.join(tmpdir(), 'idea-ask-'));
+  try {
+    const script = path.join(dir, 'ask.mjs');
+    writeFileSync(script, '');
+    const ran = [];
+    assert.equal(raiseAsk('x-1', 'ann', { script, run: (...a) => ran.push(a) }), true);
+    assert.deepEqual(ran[0][1].slice(1, 3), ['x-1', 'ann']);
+    assert.throws(() => raiseAsk('x-1', 'ann', { script, run: () => { throw new Error('ask failed'); } }), /ask failed/);
+  } finally {
+    removeTempDir(dir, 'idea-inbox.node-test');
+  }
 });

@@ -1,11 +1,13 @@
 // Tests for the bd, actor and dolt-sync plumbing the hygiene scripts share.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
+  CLOSE_ASSIGNEE_REFUSAL_RE,
   DISTINCT_ACTOR_RE,
   askLabel,
   bdCli,
@@ -14,6 +16,7 @@ import {
   doltSync,
   parseBdJsonRows,
   resolveActor,
+  slugifyActorBase,
   spawnWithShellFallback,
 } from './hygiene-bd-lib.mjs';
 import { removeTempDir } from './test-support/hygiene-temp-dir.mjs';
@@ -78,7 +81,7 @@ test('resolveActor: the actor-id script when it is installed, else BEADS_ACTOR, 
 
     const absent = path.join(dir, 'nope.mjs');
     assert.equal(resolveActor({ env: { BEADS_ACTOR: 'env-bot-12345678' }, run: () => assert.fail('must not spawn'), script: absent }), 'env-bot-12345678');
-    assert.equal(resolveActor({ env: {}, script: absent }), '');
+    assert.equal(resolveActor({ env: {}, script: absent, gitUserName: () => '' }), '');
   } finally {
     removeTempDir(dir, 'hygiene-bd-lib.node-test');
   }
@@ -126,4 +129,75 @@ test('spawnWithShellFallback reports status and output, and a timeout as timedOu
 test('askLabel lower-cases and prefixes a person key', () => {
   assert.equal(askLabel('Ann'), 'ask-ann');
   assert.equal(askLabel(' bob '), 'ask-bob');
+});
+
+test('resolveActor without the actor-id script: BEADS_ACTOR, then the slug of BEADS_ACTOR_BASE, git user.name or $USER', () => {
+  const absent = path.join(tmpdir(), 'no-such-agent-actor-id.mjs');
+  const never = () => assert.fail('must not spawn');
+  assert.equal(resolveActor({ env: { BEADS_ACTOR: 'env-bot-12345678' }, run: never, script: absent, gitUserName: () => 'Ann Lee' }), 'env-bot-12345678');
+  assert.equal(resolveActor({ env: { BEADS_ACTOR_BASE: 'Base Name' }, run: never, script: absent, gitUserName: () => 'Ann Lee' }), 'base-name');
+  assert.equal(resolveActor({ env: {}, run: never, script: absent, gitUserName: () => 'Ann Lee' }), 'ann-lee');
+  assert.equal(resolveActor({ env: { USER: 'Some User' }, run: never, script: absent, gitUserName: () => '' }), 'some-user');
+  assert.equal(resolveActor({ env: {}, run: never, script: absent, gitUserName: () => '' }), '');
+  assert.equal(slugifyActorBase('  Captain  Goose! '), 'captain-goose');
+});
+
+test('doltSync without the beads set warns that the sync is NOT verified, once per call; with it, no warning', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'hygiene-warn-'));
+  try {
+    const warnings = [];
+    const run = () => ({ status: 0 });
+    doltSync('pull', { run, script: path.join(dir, 'missing.mjs'), warn: (l) => warnings.push(l) });
+    doltSync('push', { run, script: path.join(dir, 'missing.mjs'), warn: (l) => warnings.push(l) });
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[0], /sync NOT verified \(beads set not installed\)/);
+    const present = path.join(dir, 'bd-dolt-sync.mjs');
+    writeFileSync(present, '');
+    doltSync('pull', { run, script: present, warn: (l) => warnings.push(l) });
+    assert.equal(warnings.length, 2, 'the verified CLI path says nothing');
+  } finally {
+    removeTempDir(dir, 'hygiene-bd-lib.node-test');
+  }
+});
+
+// ── drift guard: the copies in hygiene-bd-lib.mjs against the sets they stand in for ──
+// Each copy exists only because a set may import nothing outside base and itself. When the real
+// file is installed beside this one, the copy must still say the same thing.
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const sibling = (...rel) => path.join(HERE, ...rel);
+
+async function load(file) {
+  return import(pathToFileURL(file).href);
+}
+
+test('drift: the close-refusal pattern matches scripts/lib/bd-cli.mjs', async (t) => {
+  const file = sibling('lib', 'bd-cli.mjs');
+  if (!existsSync(file)) return t.skip('scripts/lib/bd-cli.mjs is not installed here');
+  const real = await load(file);
+  assert.equal(CLOSE_ASSIGNEE_REFUSAL_RE.source, real.CLOSE_ASSIGNEE_REFUSAL_RE.source);
+  assert.equal(closeRefusalAssignee(REFUSAL, 'x-1'), real.closeRefusalAssignee(REFUSAL, 'x-1'));
+});
+
+test('drift: DISTINCT_ACTOR_RE and the name slug match scripts/agent-actor-id.mjs', async (t) => {
+  const file = sibling('agent-actor-id.mjs');
+  if (!existsSync(file)) return t.skip('scripts/agent-actor-id.mjs is not installed here');
+  const real = await load(file);
+  assert.equal(DISTINCT_ACTOR_RE.source, real.DISTINCT_ACTOR_RE.source);
+  for (const name of ['Ann Lee', '  Captain  Goose! ', 'x', '', undefined]) assert.equal(slugifyActorBase(name), real.slugifyActorBase(name));
+});
+
+test('drift: askLabel matches scripts/ask-lib.mjs', async (t) => {
+  const file = sibling('ask-lib.mjs');
+  if (!existsSync(file)) return t.skip('scripts/ask-lib.mjs is not installed here');
+  const real = await load(file);
+  for (const key of ['ann', 'Bob', ' carol ', '', undefined]) assert.equal(askLabel(key), real.askLabel(key));
+});
+
+test('drift: spawnWithShellFallback and bdCli match scripts/bd-dolt-sync.mjs', async (t) => {
+  const file = sibling('bd-dolt-sync.mjs');
+  if (!existsSync(file)) return t.skip('scripts/bd-dolt-sync.mjs is not installed here');
+  const real = await load(file);
+  assert.equal(spawnWithShellFallback.toString(), real.spawnWithShellFallback.toString());
+  assert.equal(bdCli.toString(), real.bdCli.toString());
 });

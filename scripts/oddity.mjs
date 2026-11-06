@@ -13,15 +13,15 @@
 // checkout every bd call is `bd -C <store checkout>`, found from $AGENT_TOOLING_CHECKOUT or a
 // sibling directory named by the repo's beadPrefix.
 //
-// Why a script, and why beads: the log used to be a plain file outside any repo —
+// Why a script, and why beads: the log used to be a plain file outside any repo -
 // unversioned, single-machine, and appended to by every concurrent session. Its
-// archive now lives in the repo (ARCHIVE_REL, docs/agents/oddity-archive.md by default) and the
+// archive now lives in the repo (ARCHIVE_REL, docs/agents/tooling-oddities-archive.md by default) and the
 // ACTIVE entries are beads labelled `tooling-oddity` (LABEL): `bd dolt` syncs them across
 // people and machines, `bd ready` surfaces them, close-beads archives them when the
 // fixing PR merges, and a recurrence is a `relates-to` edge rather than a grep.
 //
 // `--body-file` takes the entry text from a file written with the Write tool (never
-// a heredoc — the Bash tool truncates large commands).
+// a heredoc, the Bash tool truncates large commands).
 // Without it the bead gets the template with placeholders; fill it in afterwards
 // with `bd update <id> --body-file <md>`.
 //
@@ -84,14 +84,14 @@ function repoRoot() {
   return git(['rev-parse', '--show-toplevel']) || process.cwd();
 }
 
-/** The checkout the RUNNING script lives in — not the caller's repo, not $AGENT_TOOLING_CHECKOUT. */
+/** The checkout the RUNNING script lives in, not the caller's repo, not $AGENT_TOOLING_CHECKOUT. */
 const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * The first CLI file whose on-disk content is an OLDER committed version than the
  * local `origin/main` ref knows, or null when every file is current, locally
- * modified (development), or unjudgeable (fail open) — see classifySelfVersion
- *. `git hash-object` applies the checkout's attribute filters, so a
+ * modified (development), or unjudgeable (fail open); see classifySelfVersion.
+ * `git hash-object` applies the checkout's attribute filters, so a
  * CRLF working copy still hashes to the committed LF blob.
  */
 function selfStaleFile() {
@@ -129,7 +129,7 @@ function defaultRepoName(callerRoot, store) {
 
 // ODDITY_BD_STUB is the test seam: a node script standing in for bd, so the
 // cross-repo tests can file and list without a real Dolt database. A .cmd shim on
-// PATH would not work — spawnSync without a shell does not resolve one on Windows.
+// PATH would not work, spawnSync without a shell does not resolve one on Windows.
 const BD_STUB = process.env.ODDITY_BD_STUB;
 
 function bd(args, { dryRun = false, capture = true } = {}) {
@@ -175,9 +175,9 @@ function usage(code = 1) {
 
 /**
  * Live issue states from GitHub, keyed `repo#issue`. Missing keys mean gh failed
- * for that issue (offline, rate limit, bad token) — reported as UNKNOWN, never as
+ * for that issue (offline, rate limit, bad token), reported as UNKNOWN, never as
  * OPEN, so a dead gh cannot quietly keep a workaround alive.
- * GITHUB_TOKEN is dropped from the child env but GH_TOKEN is kept — see ghChildEnv.
+ * GITHUB_TOKEN is dropped from the child env but GH_TOKEN is kept, see ghChildEnv.
  */
 function fetchIssueStates(entries) {
   const env = ghChildEnv(process.env);
@@ -207,7 +207,7 @@ function fetchIssueStates(entries) {
 
 /**
  * Run one registry entry's verify script: `node <root>/<entry.verify.script> ...extraArgs`.
- * Extra args are forwarded byte-for-byte — a verify script's own argv is the probe
+ * Extra args are forwarded byte-for-byte, a verify script's own argv is the probe
  * (a doubled-backslash string, `--receive <payload>`, …), so this deliberately
  * bypasses the CLI's own flag parser rather than trying to validate probe content
  * it has no business inspecting.
@@ -326,7 +326,7 @@ function main(argv) {
 
   if (cmd === 'unarchived') {
     // Closed by a PR's Fixes: line, never given an archive entry. `list`
-    // is bd's default listing — open beads — so these had already left the sweep's
+    // is bd's default listing, open beads, so these had already left the sweep's
     // input; this is the query that brings them back.
     const r = bd(buildListArgs({ repo: flags.repo, json: true, bdDir, status: 'closed' }));
     if (r.status !== 0) {
@@ -402,7 +402,7 @@ function main(argv) {
 
   // A title that merely BEGINS with `/` is rewritten by MSYS before this process sees a
   // single byte of it, and nothing else in the pipeline will ever notice.
-  // Repaired here rather than rejected — the original is unambiguous — but never
+  // Repaired here rather than rejected, the original is unambiguous, but never
   // quietly: the whole defect was a success message over a corrupted title.
   const repair = repairMsysMangledTitle(given);
   const rawTitle = repair.title;
@@ -462,10 +462,9 @@ function main(argv) {
     process.stderr.write(`bd create failed: ${(created.stderr || '').trim()}\n`);
     return created.status ?? 1;
   }
-  // `.pop()` is safe here and was CHECKED, not assumed (bd-gm2rf asked whether it
-  // survives a validation warning): under `--silent`, bd 1.2.2 writes the id and nothing
-  // else to stdout, and a `missing required sections` warning goes to stderr where it
-  // belongs — verified 2026-09-12 in an isolated `bd init` workspace. Without `--silent`
+  // `.pop()` is safe here, and that was checked rather than assumed (does it survive a
+  // validation warning?): under `--silent`, bd writes the id and nothing else to stdout,
+  // and a `missing required sections` warning goes to stderr where it belongs. Without `--silent`
   // stdout ends with a "💡 Tip:" line, which `.pop()` would happily return instead, so
   // this line and `buildCreateArgs`' `--silent` are a pair. Do not separate them.
   const id = dryRun ? `${BEAD_PREFIX}-dryrun` : (created.stdout || '').trim().split('\n').pop();

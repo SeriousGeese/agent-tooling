@@ -100,7 +100,7 @@ test('groupByRepo: every known repo appears even at zero, closed rows dropped, u
 test('renderDigest: summary counts, recurrence first, per-repo sections, staleness, footer', () => {
   const { body, counts } = renderDigest({ registry: REGISTRY, upstream: UPSTREAM, oddities: ODDITIES, today: '2026-09-13', runUrl: 'https://example.test/run/1', knownRepos: KNOWN_REPOS });
   assert.deepEqual(counts, { retire: 1, unknown: 1, open: 1, total: 4, unarchived: null, parked: 0 });
-  assert.match(body, /^Tooling friction check for \*\*2026-09-13\*\* — retire 1 · unknown 1 · open upstream 1 · open entries 4\n/);
+  assert.match(body, /^Tooling-oddities check for \*\*2026-09-13\*\* — retire 1 · unknown 1 · open upstream 1 · open entries 4\n/);
   assert.match(body, /https:\/\/example\.test\/run\/1/);
   assert.match(body, /### repo:acme — 2/);
   assert.match(body, /### repo:game-repo — 0\n\n_none_/);
@@ -126,7 +126,7 @@ test('renderDigest: closed-but-unarchived entries are counted and listed when th
   assert.match(body, new RegExp(String.raw`- \`${BP}-eeee1\` fixed by PR \(PR #3170\)\n- \`${BP}-eeee2\` fixed by hand\n`));
   assert.doesNotMatch(body, new RegExp(String.raw`${BP}-dddd1\` already archived`));
 
-  // Without the pair, no section and no count — never a misleading zero.
+  // Without the pair, no section and no count, never a misleading zero.
   const without = renderDigest({ registry: REGISTRY, upstream: UPSTREAM, oddities: ODDITIES, closed, today: '2026-09-13' });
   assert.equal(without.counts.unarchived, null);
   assert.doesNotMatch(without.body, /unarchived|not yet archived/);

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Idea inbox — the ONE bead that collects speculative ideas for the repo's people
+// Idea inbox, the ONE bead that collects speculative ideas for the repo's people
 // (the `people` of agent-tooling.json) to triage.
 //
 //   node scripts/idea-inbox.mjs add "<idea>" [--source "<where it came from>"]
@@ -13,17 +13,19 @@
 // The inbox is a childless `task` labelled `idea-inbox` + `human-required`: human-required keeps
 // it out of `bd ready --exclude-label human-required`, so no agent "works" it, and a childless
 // task is outside every nightly hygiene close (a nightly epic close touches epics only).
-// Nothing but a person closes it — losing an unread idea is the failure this exists to prevent.
+// Nothing but a person closes it, losing an unread idea is the failure this exists to prevent.
 //
-// Every write goes pull -> mutate -> push through the verified dolt sync (scripts/bd-dolt-sync.mjs when the beads set is installed, a bare
-// `bd dolt pull|push` otherwise). Unlike ask.mjs, an
+// Every write goes pull -> mutate -> push through the verified dolt sync. Hygiene relies on the
+// beads set for that: scripts/bd-dolt-sync.mjs verifies the sync when it is installed. Without it a
+// bare `bd dolt pull|push` runs and a warning says the sync is NOT verified. Unlike ask.mjs, an
 // unverified pull REFUSES the write (a stale read can open a second inbox), and a failed push is
-// reported loudly and exits non-zero, because the note is then local-only.
+// reported loudly and exits non-zero, because the note is then local-only. A missing ask.mjs (asks
+// set) only skips raising the ask: the note is already written, so that is a warning and exit 0.
 import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { loadConfig } from './agent-tooling-config.mjs';
+import { loadConfig, peopleOf } from './agent-tooling-config.mjs';
 import { askLabel, bd, bdJson, resolveActor, siblingScript, syncPull, syncPush } from './hygiene-bd-lib.mjs';
 
 export const INBOX_LABEL = 'idea-inbox';
@@ -47,8 +49,16 @@ export function pickInbox(rows) {
   return open[0] ?? null;
 }
 
+/** The handles of the configured people (entries may be plain handles or objects). */
+export function configuredHandles(cfg = loadConfig()) {
+  return peopleOf(cfg).map((p) => p.handle);
+}
+
+/** `['--actor', actor]`, or nothing when the actor is empty (bd then uses its own default). */
+export const actorArgs = (actor) => (actor ? ['--actor', actor] : []);
+
 /** People whose ask label is missing from the inbox row. */
-export function missingAsks(row, people = loadConfig().people) {
+export function missingAsks(row, people = configuredHandles()) {
   const labels = new Set(row?.labels ?? []);
   return people.filter((key) => !labels.has(askLabel(key)));
 }
@@ -98,23 +108,37 @@ const PUSH_FAILED =
   '[idea-inbox] *** PUSH FAILED — the idea is written LOCALLY ONLY. ***\n' +
   `[idea-inbox] Retry with:  ${existsSync(siblingScript('bd-dolt-sync.mjs')) ? 'node scripts/bd-dolt-sync.mjs push' : 'bd dolt push'}`;
 
+/**
+ * Raise one person's ask on the inbox via ask.mjs. A missing ask.mjs (asks set not installed) is a
+ * warning, not a failure: the note is already written and pushed, so the run must not exit 1.
+ * A present ask.mjs that fails still throws, and addIdea reports it.
+ */
+export function raiseAsk(id, person, { script = siblingScript('ask.mjs'), run = execFileSync, warn = (l) => console.warn(l) } = {}) {
+  if (!existsSync(script)) {
+    warn(`[idea-inbox] WARNING: ask.mjs is not installed (asks set), so no ask was raised for ${person}. The idea is recorded.`);
+    return false;
+  }
+  run(process.execPath, [script, id, person, ASK_REASON], { stdio: 'inherit' });
+  return true;
+}
+
 function defaultDeps() {
   const askScript = siblingScript('ask.mjs');
   return {
     actor: () => resolveActor(),
-    people: () => loadConfig().people,
+    people: () => configuredHandles(),
     pull: () => syncPull().ok,
     push: () => syncPush().ok,
     list: () => bdJson(['list', '--label', INBOX_LABEL, '--all', '--json', '-n', '0']),
     create: (actor) =>
       bd([
-        'create', '--actor', actor, '--type', 'task', '--priority', 'P3', '--silent',
+        'create', ...actorArgs(actor), '--type', 'task', '--priority', 'P3', '--silent',
         '--title', INBOX_TITLE, '--description', INBOX_DESCRIPTION,
         '--labels', `${INBOX_LABEL},human-required`,
       ]).trim(),
-    note: (id, text, actor) => bd(['note', id, text, '--actor', actor]),
-    close: (id, reason, actor) => bd(['close', id, '--reason', reason, '--actor', actor]),
-    ask: (id, person) => execFileSync(process.execPath, [askScript, id, person, ASK_REASON], { stdio: 'inherit' }),
+    note: (id, text, actor) => bd(['note', id, text, ...actorArgs(actor)]),
+    close: (id, reason, actor) => bd(['close', id, '--reason', reason, ...actorArgs(actor)]),
+    ask: (id, person) => raiseAsk(id, person, { script: askScript }),
     log: (line) => console.log(line),
     error: (line) => console.error(line),
   };

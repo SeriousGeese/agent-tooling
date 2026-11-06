@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Pure planning logic for two deferred-bead rules. No bd calls, no
-// filesystem, no process exit — that is what lets scripts/epic-hygiene.node-test.mjs
+// filesystem, no process exit, that is what lets scripts/epic-hygiene.node-test.mjs
 // cover it without stubbing a bd binary. The bd-touching CLI is scripts/epic-hygiene.mjs.
 //
 // ── Rule 1: an epic closes CLEAN ──────────────────────────────────────────────
@@ -11,8 +11,8 @@
 // Both directions are cross-linked (new bead names the origin epic; the origin
 // epic's close reason names the new bead).
 //
-// Rule 1b is the mirror image, and the tracker-wide scan used to miss it entirely
-//: an OPEN epic whose only non-closed children are deferred has no
+// Rule 1b is the mirror image, and the tracker-wide scan used to miss it entirely:
+// an OPEN epic whose only non-closed children are deferred has no
 // live work left, so it should close and evict them by the same recipe. See
 // planFullSweep for why the status test is `=== 'open'` and not `!== 'closed'`.
 //
@@ -22,16 +22,16 @@
 // apart, informational only. (A CLOSED non-epic parent still evicts under Rule 1, as before.)
 //
 // The guidance used to bless the opposite ("if all children are closed or deferred
-// ... run bd close"), which is how 37 closed parents ended up holding 48 deferred
-// children. That is a readability problem rather than a work-loss one — a closed
+// ... run bd close"), which is how closed parents ended up holding deferred
+// children. That is a readability problem rather than a work-loss one, a closed
 // parent does NOT hide a child from `bd list --status deferred`, and parent status
 // is irrelevant to `bd ready`.
 //
 // ── Rule 2: a deferred bead carries a DATE ────────────────────────────────────
-// This is the half that actually loses work. Measured 2026-08-22: 202 of 280
-// `status: deferred` beads had NO defer date at all, and a hard-deferred bead
-// never auto-surfaces when its date passes (4 were already expired and still
-// invisible to `bd ready`, one since 2026-06-06). Evicting beads onto a tidy new
+// This is the half that actually loses work. Most
+// `status: deferred` beads can end up with NO defer date at all, and a hard-deferred bead
+// never auto-surfaces when its date passes (expired ones stay
+// invisible to `bd ready`). Evicting beads onto a tidy new
 // epic relocates that invisible pile without making it visible again, so the two
 // rules ship together or the cleanup is cosmetic.
 //
@@ -57,7 +57,7 @@ export const NEW_EPIC_PREFIX = 'NEW_EPIC:';
 /**
  * Swap `NEW_EPIC:<origin>` placeholders for the id bd actually minted.
  *
- * The planner is pure, so it cannot know the new epic's id — it emits a
+ * The planner is pure, so it cannot know the new epic's id, it emits a
  * placeholder key and the CLI resolves it once `bd create` has run. This applies
  * to free TEXT as well as to id fields: the origin epic's cross-link note and
  * close reason both name where its children went, and shipping the raw
@@ -116,22 +116,22 @@ export function resolveChildren(rows) {
 
 /**
  * Is this bead parked? Two shapes both suppress `bd ready`:
- *   (a) hard  `status: deferred`             — the repo convention
- *   (b) soft  `status: open` + future date   — the inconsistent minority
+ *   (a) hard  `status: deferred`            , the repo convention
+ *   (b) soft  `status: open` + future date  , the inconsistent minority
  *
  * `in_progress` is neither, whatever the date says. A stale future
- * `defer_until` outlives the deferral routinely — un-deferring by editing status
+ * `defer_until` outlives the deferral routinely, un-deferring by editing status
  * leaves the date field behind, and `bd defer --until` never wrote one in the
- * first place — so the (b) date check alone read an actively-claimed bead as
+ * first place, so the (b) date check alone read an actively-claimed bead as
  * parked. Rule 1b then planned to evict live work into a "deferred follow-ups"
  * bucket and CLOSE its parent epic: a child claimed `in_progress` two days
  * after its deferral was lifted was planned for exactly that, along with its
  * siblings. An active claim asserts someone is
- * working the bead right now, which is the opposite of parked — so the status
+ * working the bead right now, which is the opposite of parked, so the status
  * wins over the leftover date, and it is checked BEFORE it.
  *
- * Same failure the `subtreeHasLiveWork` note below describes for grandchildren
- *, reached one level up through the status/date interaction.
+ * Same failure the `subtreeHasLiveWork` note below describes for grandchildren,
+ * reached one level up through the status/date interaction.
  * @param {object} row
  * @param {Date} now
  */
@@ -142,7 +142,7 @@ export function isDeferred(row, now) {
   return Boolean(row.defer_until && new Date(row.defer_until) > now);
 }
 
-/** A hard-deferred bead whose date has passed — parked with nothing to wake it. */
+/** A hard-deferred bead whose date has passed, parked with nothing to wake it. */
 export function isExpiredDeferral(row, now) {
   if (row.status !== 'deferred') return false;
   if (!row.defer_until) return false;
@@ -158,7 +158,7 @@ export function isToggleCleanupBead(row) {
 }
 
 /**
- * A hard-deferred bead with no date at all — parked forever, so the sweep backfills a date.
+ * A hard-deferred bead with no date at all, parked forever, so the sweep backfills a date.
  *
  * A toggle-cleanup bead is the sanctioned exception: it is deferred WITHOUT a date on purpose.
  * bd 1.3 reopens a dated defer on any `bd ready` read once the date passes, which put cleanup
@@ -171,14 +171,14 @@ export function isDatelessDeferral(row) {
 
 /**
  * Does the subtree BELOW `rootId` (its descendants, not `rootId` itself) hold any
- * live work — a bead that is neither closed nor parked?
+ * live work, a bead that is neither closed nor parked?
  *
  * Rule 1b classifies a direct child as parked from the child's OWN status/date and
  * looks no further down. That is wrong when the child is
  * itself an epic: a child epic can be parked (open + future date) while its
  * grandchild is `in_progress` with a live claim. Evicting
  * on that basis would file live work under a "deferred follow-ups" epic and mark it
- * `status: deferred` — asserting the opposite of the truth. So a child counts as
+ * `status: deferred`, asserting the opposite of the truth. So a child counts as
  * parked only when its whole subtree is parked; anything with a live descendant
  * blocks the close instead.
  *
@@ -200,10 +200,10 @@ export function subtreeHasLiveWork(rootId, childrenMap, now) {
 
 /**
  * Is this epic itself a bucket that a previous eviction created? Its title ends in
- * the suffix planEpicEviction mints ("<title> — deferred follow-ups"). Re-running
+ * the suffix planEpicEviction mints ("<title>, deferred follow-ups"). Re-running
  * the eviction on such an epic closes it only to mint a SECOND bucket holding the
- * same beads — pure churn, and it produces a doubled
- * "— deferred follow-ups — deferred follow-ups" title. A
+ * same beads, pure churn, and it produces a doubled
+ * "- deferred follow-ups, deferred follow-ups" title. A
  * bucket whose children are all parked is the settled DEFERRED state (four sibling
  * buckets already sit exactly there), so it is deferred in place instead.
  *
@@ -245,11 +245,10 @@ export function deferDateFrom(now, months = DEFAULT_DEFER_MONTHS) {
  * Deterministic 0..(spreadDays-1) offset from a bead id.
  *
  * Backfilling one flat date is a trap: every dateless bead then expires on the
- * SAME day and the next sweep dumps all of them into `bd ready` at once. In the
- * 2026-08-23 cleanup that would have been 180 beads landing on one date against
- * a ready list of 25. Spreading them keeps the sweep a trickle instead of a flood.
+ * SAME day and the next sweep dumps all of them into `bd ready` at once. That
+ * would put hundreds of beads on one date against a short ready list. Spreading them keeps the sweep a trickle instead of a flood.
  *
- * FNV-1a over the id — tiny, stable across runs and machines, and no dependency.
+ * FNV-1a over the id, tiny, stable across runs and machines, and no dependency.
  */
 export function spreadOffsetDays(id, spreadDays = 60) {
   let hash = 0x811c9dc5;
@@ -267,7 +266,7 @@ export function spreadOffsetDays(id, spreadDays = 60) {
  *   P0/P1 -> base months     P2 -> base+2     P3 -> base+4     P4 -> base+6
  *
  * The bands are a "look at this again eventually" horizon, not a product
- * judgement — the point of a date is that the bead becomes sweepable at all.
+ * judgement, the point of a date is that the bead becomes sweepable at all.
  */
 export function backfillDeferDate(row, now, baseMonths = DEFAULT_DEFER_MONTHS) {
   const priority = Number.isFinite(row.priority) ? row.priority : 3;
@@ -342,7 +341,7 @@ export function describeNonEpicParent(epicId, plan) {
  * @param {{ defaultMonths?: number }} [opts]
  * @returns {{
  *   epicId: string,
- *   blockedBy: Array<object>,   // non-closed, non-deferred children — epic CANNOT close
+ *   blockedBy: Array<object>,   // non-closed, non-deferred children, epic CANNOT close
  *   deferred: Array<object>,    // children to evict
  *   target: string|null,        // nearest open ancestor, null = top-level
  *   actions: Array<object>,
@@ -359,7 +358,7 @@ export function planEpicEviction(epicId, rows, now, opts = {}) {
 
   const live = children.filter((c) => c.status !== 'closed');
   // A child is parked (evictable) only when its OWN status/date says so AND its
-  // whole subtree is parked — a deferred sub-epic with a live descendant blocks the
+  // whole subtree is parked, a deferred sub-epic with a live descendant blocks the
   // close instead of being evicted. Everything else is live.
   const deferred = live.filter((c) => isDeferred(c, now) && !subtreeHasLiveWork(c.id, childrenMap, now));
   const deferredIds = new Set(deferred.map((c) => c.id));
@@ -386,12 +385,12 @@ export function planEpicEviction(epicId, rows, now, opts = {}) {
     };
   }
 
-  // Real work remains — nothing to plan, the epic must stay open.
+  // Real work remains, nothing to plan, the epic must stay open.
   if (blockedBy.length > 0) return { epicId, blockedBy, deferred, target, actions };
   if (deferred.length === 0) return { epicId, blockedBy, deferred, target, actions };
 
   // The epic is ITSELF a previous eviction bucket. Its
-  // children are already parked under it — closing it to mint a second bucket only
+  // children are already parked under it, closing it to mint a second bucket only
   // doubles the title suffix and churns ids. An OPEN bucket is deferred in place
   // (the settled parked state); a closed/already-deferred one, or one with a child
   // waking from an expired date (Rule 2 surfaces that child), needs nothing.
@@ -438,7 +437,7 @@ export function planEpicEviction(epicId, rows, now, opts = {}) {
   } else {
     // A child whose date already passed is about to be surfaced back to `open` by
     // the same sweep. An epic holding live work is not deferred, so it is born
-    // open — otherwise the sweep leaves a "deferred" epic with active children
+    // open, otherwise the sweep leaves a "deferred" epic with active children
     // under it, which is exactly the dishonest state the hygiene guidance forbids.
     const wakes = deferred.some((c) => isExpiredDeferral(c, now));
     const deferUntil = wakes ? null : inheritedDeferDate(deferred, now) ?? deferDateFrom(now, defaultMonths);
@@ -463,8 +462,8 @@ export function planEpicEviction(epicId, rows, now, opts = {}) {
       }
     }
     // Link the new epic back to its origin with a bidirectional, NON-blocking
-    // relates-to edge. Without it the only link is prose in the description —
-    // the five epics from the 2026-08-23 sweep shipped with `deps: []` and had
+    // relates-to edge. Without it the only link is prose in the description -
+    // epics created without it shipped with `deps: []` and had
     // to be related by hand. A parent-child edge would be stronger provenance
     // but would leave the origin holding a non-closed child, which is Rule 1
     // violated one level down; relates-to gives the machine-readable link with
@@ -506,7 +505,7 @@ export function planFullSweep(rows, now, opts = {}) {
   const byId = new Map(rows.map((r) => [r.id, r]));
   const children = resolveChildren(rows);
 
-  // Rule 1 — parents that closed while still holding deferred children.
+  // Rule 1, parents that closed while still holding deferred children.
   const evictions = [];
   for (const [parentId, kids] of children) {
     const parent = byId.get(parentId);
@@ -517,11 +516,11 @@ export function planFullSweep(rows, now, opts = {}) {
   }
   evictions.sort((a, b) => a.epicId.localeCompare(b.epicId));
 
-  // Rule 1b — OPEN parents with no live work left: every child is closed or
+  // Rule 1b, OPEN parents with no live work left: every child is closed or
   // deferred, and at least one is deferred. Rule 1 above keys on the parent being
   // CLOSED and so misses the mirror image, which is the shape the hygiene guidance actually
   // legislates ("when the last implementation child finishes, the epic closes too
-  // — but only once every non-closed child is dealt with"). One epic was exactly
+  //, but only once every non-closed child is dealt with"). One epic was exactly
   // this: four closed children and one deferred, and `audit` called the tracker
   // clean while `epic <id>` planned all four correct actions the moment a
   // human pointed it at that id. Only the tracker-wide SCAN was blind.
@@ -532,7 +531,7 @@ export function planFullSweep(rows, now, opts = {}) {
   //     subtree, not a violation. A hygiene run found 8 of those and correctly
   //     left every one alone; a `!== 'closed'` test would nominate all 8 and the
   //     next sweep would "fix" eight things that were never broken.
-  //   * `in_progress` means somebody is working it right now — likewise not ours.
+  //   * `in_progress` means somebody is working it right now, likewise not ours.
   //
   // Everything else falls out of the per-epic planner, which already returns no
   // actions when live non-deferred children remain (`blockedBy`) or when there is
@@ -546,8 +545,8 @@ export function planFullSweep(rows, now, opts = {}) {
   // becomes nominatable once that child has closed and its children moved up.
   //
   // It does NOT spin forever on its own output, which is the first thing this rule
-  // looks like it might do. Evicting into a "— deferred follow-ups" epic produces an
-  // epic whose children are all deferred, i.e. the very shape being nominated here —
+  // looks like it might do. Evicting into a "- deferred follow-ups" epic produces an
+  // epic whose children are all deferred, i.e. the very shape being nominated here -
   // but that epic is born `status: deferred` (planEpicEviction), and a deferred parent
   // is out of scope by the test above. The one case that is born OPEN is when a child
   // is waking from an expired date, and the same sweep surfaces that child to `open`,
@@ -579,7 +578,7 @@ export function planFullSweep(rows, now, opts = {}) {
   staleOpen.sort((a, b) => a.epicId.localeCompare(b.epicId));
   nonEpicParents.sort((a, b) => a.parentId.localeCompare(b.parentId));
 
-  // Rule 2 — dateless and expired deferrals, tracker-wide. A bead already handled
+  // Rule 2, dateless and expired deferrals, tracker-wide. A bead already handled
   // by an eviction plan above keeps that plan's date, so skip it here.
   const claimed = new Set(
     [...evictions, ...staleOpen].flatMap((e) =>
@@ -613,17 +612,17 @@ export function sweepActions(sweep) {
   return actions;
 }
 
-/** Every action kind sweepActions() can emit — the vocabulary `--only` validates against. */
+/** Every action kind sweepActions() can emit, the vocabulary `--only` validates against. */
 export const ACTION_KINDS = ['create-epic', 'reparent', 'set-defer', 'surface-expired', 'defer-epic', 'relate', 'note', 'close-epic'];
 
 /**
  * Keep only the actions whose kind is in `kinds` (the CLI's `--only a,b`). Meant for the
- * ONE rule that is safe to apply unattended — `surface-expired`: a deferred
+ * ONE rule that is safe to apply unattended, `surface-expired`: a deferred
  * bead whose date has passed goes back to `open` so `bd ready` shows it, which bd never
  * does on its own. Evictions, backfilled dates and new bucket epics stay behind the
  * weekly `/beads-hygiene` pass, where a human reads the plan. Note that a filtered plan
  * can drop an action another action depended on (a `relate` to a `create-epic`), which
- * is fine for `surface-expired` — it stands alone — and is why the caller validates the
+ * is fine for `surface-expired`, it stands alone, and is why the caller validates the
  * kinds rather than accepting any string.
  * @param {object[]} actions
  * @param {string[]} kinds

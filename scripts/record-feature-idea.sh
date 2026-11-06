@@ -2,7 +2,7 @@
 # scripts/record-feature-idea.sh
 #
 # Records a feature idea or feature request as a bead in the repo's beads project.
-# Universal — works from any AI agent harness (Hermes, Claude, Gemini, Codex, etc.).
+# Universal, works from any AI agent harness (Hermes, Claude, Gemini, Codex, etc.).
 #
 # Defaults: P3 priority, deferred (hidden from "bd ready" until 6 months out).
 # Override with --priority <P0-P4> and/or --no-defer.
@@ -28,7 +28,7 @@ cd "$REPO_DIR"
 # sibling lookup is enough.
 #
 # DOLT_DIR is deliberately NOT set. With it, the helper's 2nd-failure recovery runs
-# `dolt reset --hard` on that clone — correct for a disposable CI mirror, destructive here: this
+# `dolt reset --hard` on that clone, correct for a disposable CI mirror, destructive here: this
 # script runs from a real checkout whose embedded Dolt database every session on the machine
 # shares, AFTER `bd create` has committed the new bead locally. A DoltHub blip then discarded the
 # bead (and any other session's unpushed bead commits) while this script still printed "Feature
@@ -143,12 +143,12 @@ ERRFILE=$(mktemp)
 
 echo "Creating bead..."
 # --body-file - (not "$TMPFILE"): bd is a native binary with the same MSYS
-# argv-path problem as jq — a raw POSIX temp path in argv only
+# argv-path problem as jq, a raw POSIX temp path in argv only
 # resolves because MSYS rewrites it, and MSYS_NO_PATHCONV=1 (routine in an
 # agent shell) breaks that. Reading the body on STDIN never
 # crosses the argv boundary.
 # `set -e` is on, so a failing `bd create` would abort the script before the id check
-# below ever runs — which is the WORST outcome here, because a create can fail with the
+# below ever runs, which is the WORST outcome here, because a create can fail with the
 # row already committed (see below). Capturing the status through `|| CREATE_STATUS=$?`
 # is the form that keeps `set -e` from killing us and lets the check do its job.
 CREATE_STATUS=0
@@ -174,7 +174,7 @@ fi
 rm -f "$TMPFILE"
 
 # Read the id from the JSON's `id` FIELD, never by a regex over the payload.
-# bd emits the object's keys sorted, so `description` comes BEFORE `id` — a first-match
+# bd emits the object's keys sorted, so `description` comes BEFORE `id`, a first-match
 # grep therefore returns whatever id-shaped string the DESCRIPTION happened to mention.
 # That is not hypothetical: a batch script doing exactly this ran `bd dep add` against ids
 # lifted out of prose fragments.
@@ -194,7 +194,7 @@ rm -f "$ERRFILE"
 
 # No id means the state is UNKNOWN, not "not created". bd runs dolt embedded, so every
 # session on this box serializes writes on one lock with no feedback while blocked
-# — a create killed by a timeout AFTER the row was committed exits non-zero
+#, a create killed by a timeout AFTER the row was committed exits non-zero
 # with nothing on stdout while the bead very much exists. Retrying blind duplicates it.
 if [[ -z "$BEAD_ID" ]]; then
   echo "ERROR: bd create returned no id (exit $CREATE_STATUS)." >&2
@@ -212,7 +212,7 @@ fi
 echo "Syncing to DoltHub..."
 dolt_pull_resilient || true
 # Never report a push that did not happen as if it had: the bead is committed LOCALLY either way
-# (nothing above can discard it — see the DOLT_DIR note at the top), so say where it is.
+# (nothing above can discard it, see the DOLT_DIR note at the top), so say where it is.
 bd dolt push 2>&1 || echo "WARNING: DoltHub push failed — the bead is recorded LOCALLY only and reaches DoltHub on the next successful 'bd dolt push'."
 
 echo ""
