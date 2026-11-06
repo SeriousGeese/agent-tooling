@@ -1610,5 +1610,7 @@ test('worktree-rm.sh derives its pending-delete file name from the prefix token'
   assert.match(src, /AGENT_TOOLING_WORKTREE_PENDING_DELETE/);
   assert.doesNotMatch(src, /[a-z]-worktree-pending-delete|\bworktree-pending-delete\.txt/);
   const name = execFileSync('bash', ['-c', "printf %s AGENT_TOOLING_WORKTREE_PENDING_DELETE | tr 'A-Z_' 'a-z-'"], { encoding: 'utf8' });
-  assert.equal(name, 'agent-tooling-worktree-pending-delete');
+  // Derived from the token too, so the expectation follows the consumer's prefix after a sync
+  // rewrites it (a literal here read `agent-tooling-...` in every consumer and failed there).
+  assert.equal(name, 'AGENT_TOOLING_WORKTREE_PENDING_DELETE'.toLowerCase().replaceAll('_', '-'));
 });
