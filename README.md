@@ -92,9 +92,22 @@ whole sync stops before writing anything and lists each such path. That covers a
 file at a path the manifest claims and a vendored file edited in place. When the consumer is
 **moving its own scripts into agent-tooling**, so that the vendored copy should replace its
 file, re-run with `--adopt` (library: `sync({ ..., adopt: true })`); each adopted path is
-printed to stderr. All checks and reads happen first; then the files are written (each
-through a temp file renamed over its path, so a symlink or hard link is replaced, never
-written through), then the record, then the stale deletes.
+printed to stderr. A target that is a symlink, a directory or anything else but a regular
+file is refused outright, `--adopt` or not. All checks and reads happen first; then the files
+are written (each through a temp file renamed over its path, so a hard link is replaced,
+never written through), then the record, then the stale deletes.
+
+A stale file (one the last sync wrote that the new selection drops) is deleted only when it is
+still byte-for-byte what the recorded ref wrote. One that was edited, or that cannot be
+confirmed because the recorded ref (or its manifest) can no longer be read, is kept with a
+message on stderr. It is also dropped from the new record, so no later sync revisits it:
+delete it by hand if it is no longer wanted.
+
+A case-only rename in the manifest (`Tool.mjs` to `tool.mjs`) never deletes the old-case
+path, because on a case-insensitive filesystem (Windows, macOS) the two names are one file. On
+a case-sensitive filesystem that leaves the old-case file in place beside the new one; delete
+it by hand. This is by design: the alternative deletes the only copy on the hosts where the
+names collide.
 
 Then:
 

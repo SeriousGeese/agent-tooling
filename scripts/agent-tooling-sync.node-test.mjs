@@ -546,6 +546,47 @@ test('a vendored file edited in place blocks a re-sync unless adopt is passed', 
   }
 });
 
+test('a prefix change and a ref bump in one re-sync is allowed and writes the new content under the new prefix', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    await sync({ into: dst, ref: src.sha, sets: ['asks'], envPrefix: 'ACME_', from: src.root });
+    const sha2 = commit(src.root, null, { 'scripts/ask.mjs': `// v2: set ${P}ALLOW_Y=1\n` });
+    await sync({ into: dst, ref: sha2, envPrefix: 'OTHER_', from: src.root });
+    assert.equal(readFileSync(path.join(dst, 'scripts/ask.mjs'), 'utf8'), '// v2: set OTHER_ALLOW_Y=1\n');
+    assert.equal(parseShaFile(readFileSync(path.join(dst, DEFAULT_SHA_FILE), 'utf8')).envPrefix, 'OTHER_');
+    assert.deepEqual(await check({ into: dst, from: src.root }), []);
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
+test('an unreadable recorded ref: a differing target needs adopt and a stale file is kept, each naming the cause', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  const gone = 'd'.repeat(40);
+  try {
+    await sync({ into: dst, ref: src.sha, sets: ['asks', 'worktree'], from: src.root });
+    const shaPath = path.join(dst, DEFAULT_SHA_FILE);
+    writeFileSync(shaPath, readFileSync(shaPath, 'utf8').replace(`ref: ${src.sha}`, `ref: ${gone}`));
+    write(dst, 'scripts/ask.mjs', 'edited\n');
+    await assert.rejects(
+      sync({ into: dst, ref: src.sha, sets: ['asks'], drop: true, from: src.root }),
+      new RegExp(`scripts/ask\\.mjs \\(cannot read manifest\\.json at ${gone}.*cannot be confirmed unchanged`),
+    );
+    assert.equal(readFileSync(path.join(dst, 'scripts/ask.mjs'), 'utf8'), 'edited\n');
+
+    const err = await captureStderr(() => sync({ into: dst, ref: src.sha, sets: ['asks'], drop: true, adopt: true, from: src.root }));
+    assert.match(err, /adopting scripts\/ask\.mjs/);
+    assert.match(err, new RegExp(`not deleting 1 stale file\\(s\\): cannot read manifest\\.json at ${gone}`));
+    assert.equal(readFileSync(path.join(dst, 'scripts/claim.sh'), 'utf8'), 'claim\n', 'the stale file is kept');
+    const rec = parseShaFile(readFileSync(shaPath, 'utf8'));
+    assert.equal(rec.files.includes('scripts/claim.sh'), false, 'and is no longer recorded: delete it by hand');
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
 test('a target that is a directory, or under a file, is refused before anything is written', async () => {
   const src = fakeSource(MANIFEST, FILES);
   const dst = consumer();

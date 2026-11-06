@@ -25,8 +25,9 @@
 //     ref wrote under the recorded prefix. A consumer file at a manifest path, or a vendored
 //     file edited in place, is listed and the whole sync stops, unless --adopt says this sync
 //     may take such files over (a consumer moving its own scripts into agent-tooling does);
-//   - checks and reads everything first, then mutates in a fixed order: each file is written
-//     through a temp file renamed over its path (never through a symlink or a hard link), then
+//   - checks and reads everything first (a symlinked or otherwise non-regular target is
+//     refused), then mutates in a fixed order: each file is written through a temp file
+//     renamed over its path (a hard link is replaced, never written through), then
 //     the record, then the stale deletes, so a failure never leaves a half-synced tree behind a
 //     record that claims otherwise;
 //   - writes each file at its path under <repo> with LF endings, deletes files an earlier sync
@@ -278,8 +279,9 @@ function assertWritableTarget(into, abs, rel) {
 
 /**
  * Write `content` at `abs` through a temp file in the same directory renamed over it. The
- * rename replaces the directory entry, so a symlink or a hard link at `abs` is replaced, never
- * written through, and a reader never sees half a file. The containment check is re-run
+ * rename replaces the directory entry, so a hard link at `abs` is replaced, never written
+ * through, and a reader never sees half a file. (A symlinked or otherwise non-regular target
+ * never gets here: assertWritableTarget refuses it up front.) The containment check is re-run
  * immediately before the mkdir, the temp write and the rename, so a directory swapped for a
  * link after the up-front checks is still refused. An existing file's mode is kept (an
  * executable script stays executable).
@@ -332,11 +334,19 @@ async function readAtRef(ref, rel, from) {
   if (from) {
     // A pinned SHA must mean the same bytes everywhere: refs/replace in the --from checkout
     // could otherwise substitute any object, and an fsmonitor hook would run its code.
-    return execFileSync('git', ['--no-replace-objects', '-c', 'core.fsmonitor=false', '-C', from, 'show', `${ref}:${rel}`], {
-      encoding: 'utf8',
-      maxBuffer: MAX_FILE_BYTES,
-      env: { ...process.env, MSYS_NO_PATHCONV: '1', GIT_NO_REPLACE_OBJECTS: '1' },
-    });
+    try {
+      return execFileSync('git', ['--no-replace-objects', '-c', 'core.fsmonitor=false', '-C', from, 'show', `${ref}:${rel}`], {
+        encoding: 'utf8',
+        maxBuffer: MAX_FILE_BYTES,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, MSYS_NO_PATHCONV: '1', GIT_NO_REPLACE_OBJECTS: '1' },
+      });
+    } catch (err) {
+      // One line, so a reason quoted inside a refusal or a note stays readable.
+      const e = /** @type {Error & { stderr?: string }} */ (err);
+      const why = String(e.stderr ?? '').trim().split('\n').pop() || e.message.split('\n')[0];
+      throw new Error(`git show ${ref}:${rel} in ${from} failed: ${why}`, { cause: err });
+    }
   }
   const url = `https://raw.githubusercontent.com/${REPO}/${ref}/${rel}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
@@ -524,19 +534,24 @@ export async function sync(opts) {
   const recorded = new Map((previous?.files ?? []).filter(isSafePath).map((f) => [ownedKey(f), f]));
   /** @type {{ f: string, why: string }[]} */
   const foreign = [];
+  /** @type {{ f: string, have: string, was: string }[]} */
+  const differing = [];
   for (let i = 0; i < files.length; i++) {
     if (!entryExists(targets[i])) continue;
     const have = readFileSync(targets[i], 'utf8').replace(/\r\n/g, '\n');
     if (have === contents[i]) continue;
     const was = recorded.get(ownedKey(files[i]));
-    if (!previous || was === undefined) {
-      foreign.push({ f: files[i], why: `no ${shaRel} records agent-tooling writing it` });
-      continue;
-    }
-    const wrote = await wroteBefore(was);
-    if (wrote.text === undefined) foreign.push({ f: files[i], why: `${wrote.why}, so it cannot be confirmed unchanged` });
-    else if (have !== wrote.text) foreign.push({ f: files[i], why: `edited since ${REPO}@${previous.ref.slice(0, 12)} wrote it` });
+    if (!previous || was === undefined) foreign.push({ f: files[i], why: `no ${shaRel} records agent-tooling writing it` });
+    else differing.push({ f: files[i], have, was });
   }
+  // The old-ref reads run together; wroteBefore() turns each failure into a per-path reason.
+  const wroteDiffering = await Promise.all(differing.map(({ was }) => wroteBefore(was)));
+  differing.forEach(({ f, have }, i) => {
+    const wrote = wroteDiffering[i];
+    if (wrote.text === undefined) foreign.push({ f, why: `${wrote.why}, so it cannot be confirmed unchanged` });
+    else if (have !== wrote.text) foreign.push({ f, why: `edited since ${REPO}@${previous?.ref.slice(0, 12)} wrote it` });
+  });
+  foreign.sort((a, b) => (a.f < b.f ? -1 : a.f > b.f ? 1 : 0));
   if (foreign.length && !opts.adopt) {
     throw new Error(
       `refusing to replace ${foreign.length} existing file(s) agent-tooling did not write; nothing was written: ` +
@@ -563,32 +578,32 @@ export async function sync(opts) {
     if (b.error) {
       notes.push(`not deleting ${stale.length} stale file(s): cannot read manifest.json at ${previous?.ref} (${b.error.message})`);
     } else {
-      for (const f of stale) {
-        if (!b.shipped.has(f)) continue;
-        const abs = inside(opts.into, f);
-        const keep = (why) => notes.push(`not deleting stale ${f}: ${why}`);
-        try {
-          assertRealInside(opts.into, abs, f);
-        } catch (err) {
-          keep(/** @type {Error} */ (err).message);
-          continue;
-        }
-        if (!entryExists(abs)) continue;
-        if (!lstatSync(abs).isFile()) {
-          keep('it is not a regular file');
-          continue;
-        }
-        const wrote = await wroteBefore(f);
-        if (wrote.text === undefined) {
-          keep(`${wrote.why}, so it cannot be confirmed unchanged`);
-          continue;
-        }
-        if (readFileSync(abs, 'utf8').replace(/\r\n/g, '\n') !== wrote.text) {
-          keep(`it differs from what ${REPO}@${previous?.ref.slice(0, 12)} wrote, so it is treated as the consumer's; delete it by hand if it is not`);
-          continue;
-        }
-        deletions.push({ f, abs, wrote: wrote.text });
-      }
+      // One outcome per stale path, the old-ref reads run together, then notes and deletions
+      // are collected in path order.
+      /** @type {{ keep?: string, deletion?: { f: string, abs: string, wrote: string } }[]} */
+      const outcomes = await Promise.all(
+        stale.map(async (f) => {
+          if (!b.shipped.has(f)) return {};
+          const abs = inside(opts.into, f);
+          try {
+            assertRealInside(opts.into, abs, f);
+          } catch (err) {
+            return { keep: /** @type {Error} */ (err).message };
+          }
+          if (!entryExists(abs)) return {};
+          if (!lstatSync(abs).isFile()) return { keep: 'it is not a regular file' };
+          const wrote = await wroteBefore(f);
+          if (wrote.text === undefined) return { keep: `${wrote.why}, so it cannot be confirmed unchanged` };
+          if (readFileSync(abs, 'utf8').replace(/\r\n/g, '\n') !== wrote.text) {
+            return { keep: `it differs from what ${REPO}@${previous?.ref.slice(0, 12)} wrote, so it is treated as the consumer's; delete it by hand if it is not` };
+          }
+          return { deletion: { f, abs, wrote: wrote.text } };
+        }),
+      );
+      outcomes.forEach(({ keep, deletion }, i) => {
+        if (keep) notes.push(`not deleting stale ${stale[i]}: ${keep}`);
+        if (deletion) deletions.push(deletion);
+      });
     }
   }
 
