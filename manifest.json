@@ -84,7 +84,10 @@
       ".agents/skills/recurring-task/SKILL.md",
       ".agents/skills/window-review/SKILL.md"
     ],
-    "docs": [],
+    "docs": [
+      "docs/agents/shared/beads-sync.md",
+      "docs/agents/shared/worktrees-and-claims.md"
+    ],
     "ritual": []
   }
 }

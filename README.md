@@ -39,10 +39,21 @@ config loader and the node:test runner). Everything else is in a named set, chos
 | `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata (and the parse-flags and gh-rate-limit helpers they import). Knobs: `AGENT_TOOLING_PR_WORKFLOW`, `AGENT_TOOLING_GATE_CHECK`, `pr-metadata --migrations-dir` |
 | `session` | Session phase and tracker, hooksPath repair |
 | `skills` | Process skills under `.agents/skills/`: `bead-workflow` (with its `agents/openai.yaml`), `beads-bulk`, `beads-hygiene`, `prompt-next-work`, `bead-chains`, `mvp-readiness`, `recurring-task`, `window-review`, `dependabot-handler`. (`ask-review` ships in `asks`, with the script it drives.) Each may read a consumer-owned `LOCAL.md`, see Skill overlays |
-| `docs` | The generic halves of the agent docs under `docs/agents/shared/` |
+| `docs` | The generic halves of the agent docs under `docs/agents/shared/`: `worktrees-and-claims.md`, `beads-sync.md` |
 | `ritual` | The agent-ritual conformance smoke |
 
 `all` is every set; `none` is `base` alone. A set may be empty until its files move here.
+
+### The `docs` set
+
+Two long agent docs are split into a generic half here and a consumer half there. The generic half
+(`docs/agents/shared/worktrees-and-claims.md`: claim identity, worktree isolation failure modes,
+`worktree-rm.sh` invariants, the `core.hooksPath` hijack, rebasing inside a worktree, append-versus-append
+conflicts; `docs/agents/shared/beads-sync.md`: Dolt sync failure modes, recovery recipes, bd gotchas,
+tracker mutation and PR wiring rules) is vendored in place and must pass the neutral-text contract
+(no consumer names, bead ids, people or hostnames). The consumer keeps its own incidents, bead ids and
+measurements in its existing `docs/agents/<name>.md`, which links to the shared half. Environment
+variables are written with the neutral `AGENT_TOOLING_` prefix, which sync rewrites.
 
 ### The `hygiene` set
 
