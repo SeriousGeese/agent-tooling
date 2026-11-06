@@ -151,7 +151,18 @@ if [ -f "$HERE/agent-tooling-config.mjs" ] && command -v node >/dev/null 2>&1; t
   BEAD_PREFIX="$(node --input-type=module -e "$_LAND_PREFIX_PROBE" "$(to_node_path "$HERE/agent-tooling-config.mjs")" || true)"
 fi
 ID_RE="${BEAD_PREFIX:-[A-Za-z][A-Za-z0-9]*}-[a-z0-9]+(\.[0-9]+)*"
-norm() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
+# One spelling per directory. `pwd -P` resolves symlinks but keeps an 8.3 short name (RUNNER~1), while
+# git reports the long form (runneradmin) for the same directory, so two spellings of one path never
+# compared equal. cygpath -l expands the short name; a missing directory comes back unchanged.
+norm() {
+  local d
+  d="$(cd "$1" 2>/dev/null && pwd -P)" || { printf '%s' "$1"; return 0; }
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -u -- "$(cygpath -ml -- "$d" 2>/dev/null || printf '%s' "$d")" 2>/dev/null || printf '%s' "$d"
+  else
+    printf '%s' "$d"
+  fi
+}
 # The awk must not `exit` early: SIGPIPE on `git worktree list` becomes 141 under pipefail.
 PRIMARY="$(git -C "$HERE" worktree list --porcelain | awk '/^worktree / && !seen {print $2; seen = 1}')"
 [ -n "$PRIMARY" ] || { echo "ERROR: $HERE is not inside a git checkout." >&2; exit 2; }
@@ -165,7 +176,7 @@ if [ -n "$TARGET" ]; then
   if [ "$TARGET_ABS" = "$PRIMARY" ]; then
     echo "ERROR: $TARGET is the PRIMARY checkout, not a worktree." >&2; exit 2
   fi
-  case "$HERE/" in
+  case "$(norm "$HERE")/" in
     "$TARGET_ABS"/*)
       echo "ERROR: this copy of land.sh lives INSIDE the worktree it would remove ($HERE)." >&2
       echo "  Run the primary checkout's copy: bash $PRIMARY/scripts/land.sh $TARGET_ABS" >&2

@@ -52,7 +52,18 @@ git_disable_fsmonitor
 # identical and cannot race.
 PRIMARY="$(git worktree list --porcelain | awk '/^worktree / && !seen {print $2; seen = 1}')"
 
-norm() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
+# One spelling per directory. `pwd -P` resolves symlinks but keeps an 8.3 short name (RUNNER~1), while
+# git reports the long form (runneradmin) for the same directory, so two spellings of one path never
+# compared equal. cygpath -l expands the short name; a missing directory comes back unchanged.
+norm() {
+  local d
+  d="$(cd "$1" 2>/dev/null && pwd -P)" || { printf '%s' "$1"; return 0; }
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -u -- "$(cygpath -ml -- "$d" 2>/dev/null || printf '%s' "$d")" 2>/dev/null || printf '%s' "$d"
+  else
+    printf '%s' "$d"
+  fi
+}
 
 # The session-lock checker, run with paths node can open. Git Bash hands a native
 # program a `/c/…` argument verbatim whenever MSYS_NO_PATHCONV=1 is set, so node cannot even load

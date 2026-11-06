@@ -10,6 +10,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { removeTempDir } from './test-support/cleanup.mjs';
+import { shortForm } from './test-support/short-path.mjs';
 import {
   LOCK_DIR_NAME,
   MAX_AGE_MS,
@@ -77,6 +78,18 @@ test('findCheckout reads the toplevel and the shared common dir from the filesys
   assert.equal(pathKey(a.commonDir), pathKey(f.commonDir), 'a linked worktree shares the primary .git');
   assert.equal(a.linked, true);
   assert.equal(pathKey(findCheckout(path.join(f.wtB, 'deep')).toplevel), pathKey(f.wtB), 'a subdirectory resolves to its worktree');
+});
+
+test('pathKey spells an 8.3 short path and its long path as one key', (t) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'slock-short-name-')));
+  roots.add(dir);
+  const short = shortForm(dir);
+  if (!short) {
+    t.skip('no 8.3 short spelling of the temp path here (not Windows, or short names are disabled on this volume)');
+    return;
+  }
+  assert.notEqual(short.toLowerCase(), dir.toLowerCase(), 'the probe must be a different spelling');
+  assert.equal(pathKey(short), pathKey(dir));
 });
 
 test('pathKey spells one directory one way: MSYS, native and trailing-slash forms agree on Windows', () => {

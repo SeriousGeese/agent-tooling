@@ -10,7 +10,8 @@
 // for multi-commit squashes.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, copyFileSync, existsSync, chmodSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, copyFileSync, existsSync, chmodSync, rmSync, realpathSync } from 'node:fs';
+import { shortForm } from './test-support/short-path.mjs';
 import { removeTempDir } from './test-support/cleanup.mjs';
 import { copyTemplate, disposeTemplates } from './test-support/git-fixture-template.mjs';
 import path from 'node:path';
@@ -226,6 +227,24 @@ test('a target neither git nor rm can delete is removed through PowerShell, and 
     assert.ok(!existsSync(f.wtA), 'the target is gone');
     assert.ok(existsSync(f.wtB), 'the sibling survives');
     assert.doesNotMatch(git(f.work, 'worktree', 'list', '--porcelain'), /wt-a\b/, 'and its registration is pruned');
+  } finally {
+    removeTempDir(f.root, 'worktree-rm.node-test');
+  }
+});
+
+test('a target spelled with 8.3 short names is the same registered worktree as git long spelling', (t) => {
+  const f = fixtureWithWorktrees();
+  try {
+    const short = shortForm(f.wtA);
+    if (!short) {
+      t.skip('no 8.3 short spelling of the temp path here (not Windows, or short names are disabled on this volume)');
+      return;
+    }
+    assert.notEqual(short.toLowerCase(), realpathSync.native(f.wtA).toLowerCase(), 'the probe must be a different spelling');
+    const r = runRm(f.work, short);
+    assert.equal(r.status, 0, `${r.out}\n${r.err}`);
+    assert.ok(!existsSync(f.wtA), 'the target is gone');
+    assert.ok(existsSync(f.wtB), 'the sibling survives');
   } finally {
     removeTempDir(f.root, 'worktree-rm.node-test');
   }

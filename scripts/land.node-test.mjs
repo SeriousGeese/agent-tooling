@@ -9,12 +9,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { removeTempDir } from './test-support/cleanup.mjs';
+import { shortForm } from './test-support/short-path.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 // The gate set's files land.sh runs (and the libs pr-queue-state.mjs imports): the fixture copies them
@@ -166,6 +167,26 @@ const nativePath = (p) => (process.platform === 'win32' && p.startsWith('/')
 const rmCalls = (f) => (existsSync(join(f.root, 'rm-calls'))
   ? readFileSync(join(f.root, 'rm-calls'), 'utf8').trim().split('\n').map(nativePath) : []);
 
+// The script reports a path in git's spelling, so compare canonical forms: os.tmpdir() is
+// C:/Users/RUNNER~1/... on the GitHub Windows runner while git and the script say runneradmin.
+const canon = (p) => join(realpathSync.native(dirname(p)), basename(p));
+
+gated('a worktree given in its 8.3 short spelling is the registered worktree, and the removal gets the long one', (t) => {
+  const f = fixture();
+  try {
+    const short = shortForm(f.worktree);
+    if (!short) {
+      t.skip('no 8.3 short spelling of the temp path here (not Windows, or short names are disabled on this volume)');
+      return;
+    }
+    const r = run(f, [short]);
+    assert.equal(r.status, 0, r.out);
+    assert.deepEqual(rmCalls(f).map(canon), [canon(f.worktree)]);
+  } finally {
+    removeTempDir(f.root, 'land.node-test');
+  }
+});
+
 gated('lands: waits through OPEN and a tag that has not passed the merge, then verifies the beads and removes the worktree', () => {
   const f = fixture();
   try {
@@ -183,7 +204,7 @@ gated('lands: waits through OPEN and a tag that has not passed the merge, then v
     assert.equal(calls.length, 8, `pr list + body + 3 + 3:\n${calls.join('\n')}`);
     assert.match(r.out, /\(fake dolt pull\)/, 'the dolt pull ran before the beads were read');
     assert.match(r.out, /beads: all closed/);
-    assert.deepEqual(rmCalls(f), [f.worktree]);
+    assert.deepEqual(rmCalls(f).map(canon), [canon(f.worktree)]);
     assert.equal(existsSync(f.worktree), false, 'the worktree is gone');
     assert.equal(spawnSync('git', ['-C', f.primary, 'show-ref', '--verify', '--quiet', 'refs/heads/feat/x-bd-aaaa1']).status, 1, 'the local branch was deleted');
     assert.match(r.out, /^landed: PR #7, beads bd-aaaa1 bd-bbbb2 closed, worktree /m);

@@ -71,6 +71,7 @@
       "scripts/session-lock.mjs",
       "scripts/session-lock.node-test.mjs",
       "scripts/test-support/git-fixture-template.mjs",
+      "scripts/test-support/short-path.mjs",
       "scripts/test-support/worktree-new-fixture.mjs",
       "scripts/to-node-path.node-test.mjs",
       "scripts/windows-powershell-env.node-test.mjs",
