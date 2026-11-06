@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { anchoredBeadIds, branchBeadId, anchorProblems, templateProblems, sizeProblems, migrationCollisions, checkMetadata, main,
+import { anchoredBeadIds, branchBeadId, anchorProblems, templateProblems, sizeProblems, migrationCollisions, checkMetadata, main, loadBeadConfig,
   BODY_LIMIT } from './pr-metadata.mjs';
 
 // The pull_request_template.md a consumer ships: the sections and the unfilled placeholder.
@@ -21,6 +21,33 @@ test('anchoredBeadIds reads every anchor keyword and strips an (epic ...) parent
   assert.deepEqual(anchoredBeadIds('Fixes: bd-aaaaa (epic bd-zzzzz)\nCloses: bd-bbbbb.3\nResolves: `bd-ccccc`\nBead: bd-ddddd', cfg),
     ['bd-aaaaa', 'bd-bbbbb.3', 'bd-ccccc', 'bd-ddddd']);
   assert.deepEqual(anchoredBeadIds('Part of bd-aaaaa', cfg), []);
+});
+
+test('an id written with markdown emphasis or code is still an anchor', () => {
+  for (const id of ['_bd-abc12_', '**bd-abc12**', '`bd-abc12`', '*bd-abc12*']) {
+    assert.deepEqual(anchoredBeadIds(`Fixes: ${id}`, cfg), ['bd-abc12'], id);
+    assert.deepEqual(anchorProblems(`Fixes: ${id}`, 'feat/x-bd-abc12', cfg), [], id);
+  }
+});
+
+test('a broken agent-tooling.json warns as a GitHub annotation and the checks run with defaults', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-metadata-cfg-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'agent-tooling.json'), '{ not json');
+    let err = '';
+    const config = loadBeadConfig({ root: dir, stderr: { write: chunk => { err += chunk; } } });
+    assert.equal(config.beadPrefix, null);
+    assert.match(err, /^::warning title=PR metadata::agent-tooling\.json is unusable/);
+    assert.match(err, /not valid JSON/);
+    assert.equal(err.trim().split('\n').length, 1);
+    // A good (or absent) config is silent.
+    err = '';
+    fs.writeFileSync(path.join(dir, 'agent-tooling.json'), '{"beadPrefix":"bd"}');
+    assert.equal(loadBeadConfig({ root: dir, stderr: { write: chunk => { err += chunk; } } }).beadPrefix, 'bd');
+    assert.equal(err, '');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('branchBeadId takes only the id the branch ends in', () => {

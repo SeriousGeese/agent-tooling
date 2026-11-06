@@ -5,7 +5,7 @@
  * actually been lost, so none of them is hypothetical:
  *
  *   1. `.tmp-gates/` not existing, a fresh worktree has no such directory, so
- *      the remedy archive entry 65 prescribed (`npm test > .tmp-gates/out.txt`)
+ *      the usual remedy (`npm test > .tmp-gates/out.txt`)
  *      fails at SHELL level before the gate runs, and bash's "No such file or
  *      directory" reads like the gate exploding. The wrapper must create it.
  *   2. The verdict landing only on stdout, in
@@ -74,7 +74,7 @@ function runGate(root, args) {
   });
 }
 
-test('creates .tmp-gates/ when it does not exist, the hole in archive entry 65 remedy', () => {
+test('creates .tmp-gates/ when it does not exist, the hole in the usual redirect-into-.tmp-gates remedy', () => {
   const root = fixture();
   try {
     assert.equal(fs.existsSync(path.join(root, '.tmp-gates')), false, 'precondition: no .tmp-gates yet');

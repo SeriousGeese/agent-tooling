@@ -19,7 +19,7 @@ test('classify: merged, closed, queued, ejected (armed or not) and plain open', 
   assert.throws(() => classify(null), /no such pull request/);
 });
 
-// #5543 went red before the queue and read plain `open` for two land.sh caps.
+// A PR went red before the queue and read plain `open` for two landing-script caps.
 test('classify: a red gate on the head is held gate; only that check, and only a concluded red', () => {
   const headChecks = (...nodes) => ({ headChecks: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes } } } }] } });
   const run = (name, conclusion) => ({ __typename: 'CheckRun', name, conclusion });
@@ -35,8 +35,8 @@ test('classify: a red gate on the head is held gate; only that check, and only a
   assert.equal(line(classify(node({ mergeStateStatus: 'DIRTY', ...headChecks(run('gate', 'FAILURE')) }))), 'held conflict', 'the rebase comes first');
   assert.match(QUERY, /headChecks: commits\(last:1\)/);
 
-  // One head can carry several gate runs, listed in no time order (#5460: red before SKIPPED, the
-  // reverse of #5508's SKIPPED before SUCCESS).
+  // One head can carry several gate runs, listed in no time order (red before SKIPPED in one case, the
+  // reverse in another: SKIPPED before SUCCESS).
   const at = (conclusion, startedAt) => ({ ...run('gate', conclusion), startedAt });
   const both = (a, b) => [line(classify(node(headChecks(a, b)))), line(classify(node(headChecks(b, a))))];
   const failed = at('FAILURE', '2026-10-30T19:38:00Z');
@@ -58,7 +58,7 @@ test('QUERY is a balanced document: never closes more than it opened, and ends a
   assert.equal(depth, 0);
 });
 
-// #5452 sat armed for 23 hours at CHANGES_REQUESTED and then DIRTY, reading plain `open`.
+// One PR sat armed for 23 hours at CHANGES_REQUESTED and then DIRTY, reading plain `open`.
 test('classify: held review on the current head, held conflict, and a review on an older head is open', () => {
   const blocked = (commit, extra = {}) => node({ headRefOid: 'h2', reviewDecision: 'CHANGES_REQUESTED', latestOpinionatedReviews: { nodes: [
     { state: 'APPROVED', submittedAt: '2026-10-29T10:00:00Z', author: { login: 'reviewer1' }, commit: { oid: 'h2' } },
@@ -178,7 +178,7 @@ test('--dequeue takes a queued PR out by its node id, and proves it by reading a
   assert.equal(sent.length, 1);
 });
 
-// #5522 was armed straight after a push; no pr.yml run started for the new head and
+// A PR was armed straight after a push; no pr.yml run started for the new head and
 // the queue re-tested the old one.
 test('--rearm arms only once pr.yml has a run for the current head', () => {
   const out = { text: '', err: '' };
@@ -217,7 +217,7 @@ test('--rearm arms only once pr.yml has a run for the current head', () => {
   assert.equal(stateMain(['7', '--rearm', '--dequeue', '--repo', 'o/r'], { gh: ready.gh, ...io }), 2);
 });
 
-// #5599 ran gh pr ready and gh pr merge --auto back to back. The draft's run on the same
+// One PR ran gh pr ready and gh pr merge --auto back to back. The draft's run on the same
 // head had skipped every job, mergeStateStatus read CLEAN, and the arm enqueued it before its
 // ready_for_review run started.
 test('--rearm refuses a draft, and a PR whose ready_for_review run has not started yet', () => {
@@ -262,7 +262,7 @@ test('--rearm refuses a draft, and a PR whose ready_for_review run has not start
   assert.match(QUERY, /readyEvents: timelineItems\(last:1,itemTypes:\[READY_FOR_REVIEW_EVENT\]\)/);
 });
 
-// land.sh exported GH_CLI=gh, and on Windows `bash gh` ran gh.exe as a script.
+// A landing script exported GH_CLI=gh, and on Windows `bash gh` ran gh.exe as a script.
 test('needsBash: only an existing #! script on win32 goes through bash, never a native gh', () => {
   const script = () => '#!';
   const binary = () => 'MZ';

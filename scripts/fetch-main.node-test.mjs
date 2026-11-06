@@ -157,7 +157,7 @@ test('end to end: an option-like argument exits 1 and runs nothing it names', ()
     const before = sh(r.clone, 'rev-parse', 'origin/main');
     r.advance();
     const marker = path.join(r.clone, 'pwned');
-    const out = spawnSync(process.execPath, [SCRIPT, `--upload-pack=node -e "const r=require;r('fs').writeFileSync('${marker.split(path.sep).join('/')}','x')"`], { cwd: r.clone, encoding: 'utf8' });
+    const out = spawnSync(process.execPath, [SCRIPT, `--upload-pack=node -e "require('node:fs').writeFileSync('${marker.split(path.sep).join('/')}','x')"`], { cwd: r.clone, encoding: 'utf8' });
     assert.equal(out.status, 1, out.stdout);
     assert.match(out.stderr, /is not a branch name/);
     assert.equal(fs.existsSync(marker), false, 'the upload-pack command ran');

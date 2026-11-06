@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { backoffFloorMs, backoffMs, isRateLimited } from './lib/gh-rate-limit.mjs';
+import { backoffFloorMs, backoffMs, isRateLimited, RATE_LIMIT_RE } from './lib/gh-rate-limit.mjs';
 
 test('recognises the primary and secondary limits as gh words them, and nothing else', () => {
   for (const text of [
@@ -12,7 +12,10 @@ test('recognises the primary and secondary limits as gh words them, and nothing 
     'GraphQL: API rate limit exceeded (RATE_LIMITED)',
     'You have triggered an abuse detection mechanism.',
     'HTTP 429: Too Many Requests',
+    'API Rate Limit exceeded',
   ]) assert.equal(isRateLimited(text), true, text);
+  // Case-insensitive: a bash caller's copy greps with -i, so the library must keep the flag.
+  assert.ok(RATE_LIMIT_RE.flags.includes('i'), 'RATE_LIMIT_RE is case-insensitive');
   for (const text of ['HTTP 404: Not Found', 'HTTP 502: Bad Gateway', 'Could not resolve to a PullRequest', '', null]) {
     assert.equal(isRateLimited(text), false, String(text));
   }

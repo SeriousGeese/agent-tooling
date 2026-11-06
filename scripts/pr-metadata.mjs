@@ -40,10 +40,19 @@ export const BOT_AUTHORS = ['dependabot[bot]', 'github-actions[bot]', 'github-ac
 
 class UsageError extends Error {}
 
-/** The consumer's bead prefix (null: any prefix), read once from agent-tooling.json, fail-open. */
+/**
+ * The consumer's config (bead prefix null: any prefix), fail-open: a broken agent-tooling.json
+ * falls back to the defaults, which loosens the check, so say so as a GitHub warning annotation.
+ */
+export function loadBeadConfig({ root, stderr = process.stderr } = {}) {
+  const { config, error } = tryLoadConfig(root ? { root } : {});
+  if (error) stderr.write(`::warning title=PR metadata::agent-tooling.json is unusable, so the bead prefix checks run with defaults: ${String(error).replace(/\s+/g, ' ')}\n`);
+  return config;
+}
+
 let cachedConfig = null;
 function defaultConfig() {
-  cachedConfig ??= tryLoadConfig().config;
+  cachedConfig ??= loadBeadConfig();
   return cachedConfig;
 }
 
@@ -64,11 +73,15 @@ export function beadPatterns(cfg = defaultConfig()) {
 
 const lines = body => String(body ?? '').replace(/\r\n/g, '\n').split('\n');
 
-/** The bead ids on anchor lines, with `(epic ...)` parentheticals removed so an epic named in passing is not an anchor. */
+/**
+ * The bead ids on anchor lines, with `(epic ...)` parentheticals removed so an epic named in
+ * passing is not an anchor, and markdown emphasis/code characters stripped so an id written as
+ * `_id_`, `**id**` or a backticked id is still found.
+ */
 export function anchoredBeadIds(body, cfg) {
   const { scan } = beadPatterns(cfg);
   return lines(body).filter(line => ANCHOR_LINE.test(line))
-    .flatMap(line => line.replace(/\([Ee]pic[^)]*\)/g, '').match(scan) || []);
+    .flatMap(line => line.replace(/\([Ee]pic[^)]*\)/g, '').replace(/[`*_]/g, '').match(scan) || []);
 }
 
 /**
