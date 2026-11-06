@@ -15,7 +15,18 @@
     "scripts/test-support/summary-reporter.mjs"
   ],
   "sets": {
-    "asks": [],
+    "asks": [
+      ".agents/skills/ask-review/SKILL.md",
+      "scripts/agent-actor-id.mjs",
+      "scripts/agent-actor-id.node-test.mjs",
+      "scripts/ask-lib.mjs",
+      "scripts/ask-lib.node-test.mjs",
+      "scripts/ask-sync.node-test.mjs",
+      "scripts/ask.mjs",
+      "scripts/hooks/ask-inbox.mjs",
+      "scripts/hooks/ask-inbox.node-test.mjs",
+      "templates/asks-inbox.yml"
+    ],
     "beads": [],
     "hygiene": [],
     "worktree": [],

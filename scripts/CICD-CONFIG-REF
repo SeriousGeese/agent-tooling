@@ -1,3 +1,3 @@
 # The SeriousGeese/CICD commit that scripts/agent-tooling-config.mjs and its suite were copied from.
 # Change the loader in CICD agent-hooks/, copy both files here, then move this ref.
-6312264d47417c7db8e436f2e2ec43057b2233a2
+cca21d7462af962beb3ac36bd3cf10dbfd26ce4d
