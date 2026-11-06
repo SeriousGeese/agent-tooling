@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The main ruleset merges through a merge queue that requires the test checks; a queue
+  # entry is a merge_group event, so without this trigger the checks never report and every
+  # queued PR times out. The job and matrix names are unchanged so the check names match.
+  merge_group:
 
 concurrency:
   group: test-${{ github.ref }}

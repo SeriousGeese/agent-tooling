@@ -27,18 +27,18 @@ consumer at a pinned commit, at the same paths they have here, by
 ## Sets
 
 `manifest.json` lists every vendored file. `base` ships to every consumer (this sync, the
-config loader and the node:test runner). Everything else is in a named set, chosen with
+config loader, the node:test runner, the actor id and test cleanup helpers, and the two small libraries the sets share: `lib/bd-cli.mjs`, the one synchronous `bd` caller (timeout, 64 MB maxBuffer, JSON row parser, assignee-mismatch close retry), and `lib/parse-flags.mjs`, the argv splitter). Everything else is in a named set, chosen with
 `--set`:
 
 | Set | Contents |
 |---|---|
-| `asks` | Routing a bead to a person for a decision: ask.mjs, the inbox banner, the actor id |
-| `beads` | The Dolt-backed beads sync toolkit: verified pull/push (bd-dolt-sync), bd repo-churn guard, sync-remote drift check, resilient-pull shell lib |
-| `hygiene` | Epic hygiene, idea inbox, tooling-friction log |
-| `worktree` | claim.sh, worktree creation, removal, landing and session locks |
-| `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata (and the parse-flags and gh-rate-limit helpers they import). Knobs: `AGENT_TOOLING_PR_WORKFLOW`, `AGENT_TOOLING_GATE_CHECK`, `pr-metadata --migrations-dir` |
+| `asks` | Routing a bead to a person for a decision: ask.mjs, the inbox banner. A malformed `agent-tooling.json` is reported (ask.mjs errors and exits non-zero, the banner prints one `[asks]` line and exits 0) instead of reading as an empty routing table; a missing one stays silent |
+| `beads` | The Dolt-backed beads sync toolkit: verified pull/push (bd-dolt-sync), bd repo-churn guard, sync-remote drift check (finds the embedded database from a linked worktree via the git common dir), resilient-pull shell lib |
+| `hygiene` | Epic hygiene, idea inbox, tooling-friction log, blocker-chain finder (`bead-chains.mjs`; its repo label is `--repo-label`, else `AGENT_TOOLING_REPO_LABEL`, else `repo:<origin basename>`, else the lower-cased `beadPrefix`; if none, every `repo:*` label counts as another repository) |
+| `worktree` | claim.sh and its fresh-claim guard (claim-age), worktree creation with `--await`, the per-worktree dev server and port, safe removal with the `--stale` scan (worktree-rm), session locks, and land.sh. See [The worktree set](#the-worktree-set) |
+| `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata (and the gh-rate-limit helper they import; `parse-flags` is in base). Knobs: `AGENT_TOOLING_PR_WORKFLOW`, `AGENT_TOOLING_GATE_CHECK`, `pr-metadata --migrations-dir` |
 | `session` | Session phase and tracker, hooksPath repair |
-| `skills` | Process skills under `.agents/skills/`: `bead-workflow` (with its `agents/openai.yaml`), `beads-bulk`, `beads-hygiene`, `prompt-next-work`, `bead-chains`, `mvp-readiness`, `recurring-task`, `window-review`, `dependabot-handler`. (`ask-review` ships in `asks`, with the script it drives.) Each may read a consumer-owned `LOCAL.md`, see Skill overlays |
+| `skills` | Process skills under `.agents/skills/`: `bead-workflow` (with its `agents/openai.yaml`), `beads-bulk`, `beads-hygiene`, `prompt-next-work`, `bead-chains`, `mvp-readiness`, `recurring-task`, `window-review`, `dependabot-handler`. (`ask-review` ships in `asks`, with the script it drives.) `bead-chains/SKILL.md` and `prompt-next-work/SKILL.md` run `scripts/bead-chains.mjs`, so they need the `hygiene` set installed alongside. Each may read a consumer-owned `LOCAL.md`, see Skill overlays |
 | `docs` | The generic halves of the agent docs under `docs/agents/shared/`: `worktrees-and-claims.md`, `beads-sync.md` |
 | `ritual` | The agent-ritual conformance smoke |
 
@@ -55,9 +55,75 @@ tracker mutation and PR wiring rules) is vendored in place and must pass the neu
 measurements in its existing `docs/agents/<name>.md`, which links to the shared half. Environment
 variables are written with the neutral `AGENT_TOOLING_` prefix, which sync rewrites.
 
+## The worktree set
+
+`worktree-new.sh`, `claim.sh`, `worktree-dev.sh`, `worktree-port.sh`, `worktree-rm.sh`, `session-lock.mjs` and `land.sh`, with their libs
+(`lib/agent-config.sh`, `lib/git-no-fsmonitor.sh`, `lib/to-node-path.sh`). Consumer values come from
+`agent-tooling.json`: `packageManager` (npm, pnpm, yarn or bun; see below), `worktreeRoot`, `worktreeNamePattern`
+(`<repo>`, `<slug>`), `worktreeScripts` (the commands printed in hints) and `claimHelper`.
+
+**Package managers.** npm is fully supported. pnpm, yarn (classic only: berry rejects
+`--frozen-lockfile --ignore-scripts`) and bun install, with these gaps, and a one-line warning is
+printed when one of them installs: dependencies whose install scripts were skipped are NOT rebuilt
+(npm rebuilds the ones that need it), there is no lockfile-versus-installed version-drift check, and
+staleness is the lockfile's mtime against the manager's record file (for bun that record is
+`node_modules` itself, a directory mtime, so it is weak).
+
+**Printed commands.** The `--install` fix commands and the `--await` hint name `worktree-new.sh` by
+absolute path, so they work pasted from any directory, unless `worktreeScripts` overrides them.
+
+**Runtime dependencies outside this set.** claim.sh needs `agent-actor-id.mjs` (base, always
+present), `bd-dolt-sync.mjs` (the `beads` set) and the `bd` CLI. Without the beads set it refuses
+before touching `bd`, naming the missing file and the set that ships it, so adopt
+`--set beads,worktree` together. Likewise `claim-worktree-first.node-test.mjs` skips itself, with that
+reason, when `bd-dolt-sync.mjs` is absent. If `claim-age.mjs` crashes (any exit other than its refusal code 3),
+the claim proceeds and a stderr warning says the fresh-claim check did not run. The creation scripts need only git, bash and node; every config
+read degrades to the defaults when `node` or the config module is absent.
+
+**Removal, session locks and landing.** `worktree-rm.sh` removes one literal worktree path and refuses a
+primary checkout, the caller's own cwd, a dirty tree and (through `session-lock.mjs`) a worktree another
+live agent session is in; `--force-live-session` overrides the last. Its `--stale` mode lists removal
+candidates and is the report a consumer's stale-worktree banner reads (point `worktreeScripts.stale` at
+it): the `  MERGED  <path>  [<branch>]` lines, the `[worktree-stale] N of M` line and the `READ THIS FIRST`
+marker are a parsed interface. `session-lock.mjs touch` is the hook entry that records which worktree each
+session is in; wire it as in `reference/settings.json`. A removal that cannot finish records the path in
+`<git common dir>/<prefix>-worktree-pending-delete.txt` (the consumer prefix, lowercased) for a consumer-owned sweep job to retry. Knobs:
+`WORKTREE_RM_SKIP_GH=1` (offline: no `gh` lookups, which only ever removes nominations) and
+`WORKTREE_RM_OPEN_PR_LIMIT` (default 1000).
+
+`land.sh` waits for a PR to merge and for the close-beads run, checks every `Fixes:` bead is closed, then
+removes the worktree and branch. The repo comes from the `origin` remote (override `REPO=owner/repo`);
+bead ids use `beadPrefix` from `agent-tooling.json`. Knobs: `AGENT_TOOLING_CLOSE_BEADS_WORKFLOW`
+(optional: the workflow file that closes beads, named in messages; default the phrase "the close-beads workflow"), `AGENT_TOOLING_SYNCED_TAG`
+(default `beads-synced`), `AGENT_TOOLING_GH_BACKOFF_FLOOR_SECONDS` (shared with the gate set, default 60),
+`AGENT_TOOLING_PR_WATCH=0` (skip the optional per-machine watcher), and `LAND_POLL_SECONDS`,
+`LAND_TIMEOUT_MINUTES`, `LAND_BACKOFF_MAX_SECONDS`.
+
+**Runtime dependencies on other sets.** `land.sh` needs the `gate` set (`pr-queue-state.mjs`,
+`lib/parse-flags.mjs`, `lib/gh-rate-limit.mjs`) and, unless `LAND_SYNC_CMD` is set or `--no-wait` is given, the
+`beads` set (`bd-dolt-sync.mjs`). It checks for them before waiting on anything and names the missing file and
+the set that ships it, so adopt `--set beads,gate,worktree` together. `land.node-test.mjs` skips, with that
+reason, the cases that need the gate files; a parity test checks that land.sh's copy of the rate-limit pattern
+equals `lib/gh-rate-limit.mjs`. `worktree-rm.sh` and `session-lock.mjs` need only this set.
+
+**Consumer hint file.** Facts about a consumer's dependency tree live in the consumer-owned,
+never-synced `scripts/worktree-new.hint.sh` (or the file named by `WORKTREE_NEW_HINT_FILE`):
+
+| Variable | Meaning |
+|---|---|
+| `WORKTREE_NEW_NATIVE_PREBUILDS` | Packages that ship or compile a native binding. `--await` calls a tree incomplete (exit 1) when one has none, and the post-install rebuild skips them. Default: none |
+| `WORKTREE_NEW_REQUIRED_PACKAGES` | Packages that must exist under `node_modules`. Default: every dependency and devDependency |
+| `WORKTREE_NEW_BROWSER_CHECK` | `auto` (only when package.json declares Playwright), `1` or `0`. A missing browser is exit 3: deps are fine, only e2e is unavailable |
+| `WORKTREE_NEW_BROWSERS` | Browsers to check and to print the install command for. Default: chromium |
+
+`--await` exits 0 (ready), 1 (not ready), 3 (ready except the e2e browsers). Hatches:
+`AGENT_TOOLING_WORKTREE_ROOT`, `AGENT_TOOLING_WORKTREE_NO_LOCK`,
+`AGENT_TOOLING_ALLOW_CLAIM_STEAL`, `AGENT_TOOLING_CLAIM_COLLISION_HOURS` (default 4),
+`AGENT_TOOLING_ALLOW_SHARED_CLAIM_ACTOR`, `AGENT_TOOLING_DEV_SERVER_PATTERN`.
+
 ### The `hygiene` set
 
-Epic hygiene (`epic-hygiene.mjs`), the idea inbox (`idea-inbox.mjs`), the feature-idea recorder
+Epic hygiene (`epic-hygiene.mjs`), the blocker-chain finder (`bead-chains.mjs`), the idea inbox (`idea-inbox.mjs`), the feature-idea recorder
 (`record-feature-idea.sh`) and the tooling-friction log (`oddity.mjs`, `oddity-lib.mjs`,
 `oddity-digest.mjs` and the two test stubs). The set is closed over `base`: its small bd, actor and
 dolt-sync plumbing lives in `hygiene-bd-lib.mjs`, which uses the `asks` and `beads` sets' scripts

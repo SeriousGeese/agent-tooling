@@ -260,7 +260,7 @@ function storeCheckoutError({ callerRoot, explicit, sibling }) {
 // without the CLI paying a network round-trip per invocation.
 
 /** The files whose behavior IS the CLI. A change to any of them is a behavior change. */
-export const SELF_CHECK_FILES = ['scripts/oddity.mjs', 'scripts/oddity-lib.mjs', 'scripts/hygiene-bd-lib.mjs'];
+export const SELF_CHECK_FILES = ['scripts/oddity.mjs', 'scripts/oddity-lib.mjs', 'scripts/hygiene-bd-lib.mjs', 'scripts/lib/bd-cli.mjs'];
 
 export const SKIP_STALE_ENV = 'AGENT_TOOLING_ODDITY_SKIP_STALE_CHECK';
 

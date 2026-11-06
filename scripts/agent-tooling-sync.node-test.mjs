@@ -342,6 +342,24 @@ test('--check names an edited, a deleted and a CRLF-only file correctly, and a h
   }
 });
 
+test('--check reports a directory where a vendored file belongs as drift, instead of throwing', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    await sync({ into: dst, ref: src.sha, envPrefix: 'ACME_', sets: ['asks'], from: src.root });
+    rmSync(path.join(dst, 'scripts/ask.mjs'));
+    mkdirSync(path.join(dst, 'scripts/ask.mjs'));
+    const problems = await check({ into: dst, from: src.root });
+    assert.equal(problems.length, 1, problems.join('\n'));
+    assert.match(problems[0], /scripts\/ask\.mjs: exists and is not a regular file/);
+    const r = spawnSync(process.execPath, [SYNC, '--into', dst, '--check', '--from', src.root], { encoding: 'utf8' });
+    assert.equal(r.status, 1, `${r.stdout}${r.stderr}`);
+    assert.match(r.stdout + r.stderr, /not a regular file/);
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
 test('re-sync keeps the recorded sets; a dropped set or a de-listed file is deleted', async () => {
   const src = fakeSource(MANIFEST, FILES);
   const dst = consumer();

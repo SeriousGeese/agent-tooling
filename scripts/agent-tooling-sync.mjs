@@ -665,6 +665,12 @@ export async function check(opts) {
       problems.push(`${f}: missing`);
       continue;
     }
+    // Something that is not a regular file (a directory, a symlink) where a vendored file belongs
+    // is drift to report; reading it would throw (EISDIR) and take the whole --check down.
+    if (!lstatSync(local).isFile()) {
+      problems.push(`${f}: exists and is not a regular file`);
+      continue;
+    }
     const want = transform(await readAtRef(rec.ref, f, opts.from), rec.envPrefix);
     const have = readFileSync(local, 'utf8').replace(/\r\n/g, '\n');
     if (have !== want) problems.push(`${f}: differs from ${REPO}@${rec.ref.slice(0, 12)}`);

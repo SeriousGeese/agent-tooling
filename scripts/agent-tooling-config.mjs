@@ -189,18 +189,34 @@ export function resolveConfig(raw, source = CONFIG_FILE) {
   return Object.freeze(out);
 }
 
+/**
+ * True when `dir/name` exists. Only two errors mean "absent":
+ *   - ENOENT, the entry is not there;
+ *   - ENOTDIR, a component of the path is a file rather than a directory. findRoot() starts
+ *     at `from` itself, so `from` naming a file (a hook passing its own path) stats
+ *     `<file>/agent-tooling.json` first; on POSIX that is ENOTDIR, on Windows ENOENT, and in
+ *     both cases nothing can exist under a file.
+ * Anything else (EACCES, ELOOP, EIO, ...) means the answer is unknown. Reading it as absent
+ * would walk past the real root and silently load a parent repository's config, or none:
+ * rethrown.
+ * @param {string} dir
+ * @param {string} name
+ */
 function hasEntry(dir, name) {
   try {
     statSync(path.join(dir, name));
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    const code = /** @type {NodeJS.ErrnoException} */ (err)?.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+    throw err;
   }
 }
 
 /**
  * The nearest directory at or above `from` holding agent-tooling.json or a `.git` entry,
- * or `from` itself when neither is found.
+ * or `from` itself when neither is found. Throws when one of those entries cannot be
+ * statted for a reason other than its absence (see hasEntry).
  * @param {string} from
  */
 export function findRoot(from) {
@@ -241,7 +257,13 @@ export function tryLoadConfig(opts = {}) {
   try {
     return { config: loadConfig(opts), error: null };
   } catch (err) {
-    const root = opts.root ? path.resolve(opts.root) : findRoot(opts.from ?? HERE);
+    // findRoot() itself may be what threw (an unstattable entry): then the root is `from`.
+    let root;
+    try {
+      root = opts.root ? path.resolve(opts.root) : findRoot(opts.from ?? HERE);
+    } catch {
+      root = path.resolve(opts.from ?? HERE);
+    }
     return { config: Object.freeze({ ...DEFAULTS, root, found: false }), error: err.message };
   }
 }

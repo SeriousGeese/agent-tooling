@@ -13,7 +13,10 @@
  *
  * So this checks both, and treats a missing dolt CLI remote as fatal only when the embedded
  * database is actually present (a fresh clone that has not been bootstrapped yet has neither, and
- * should be told to bootstrap, not failed).
+ * should be told to bootstrap, not failed). The embedded database is found the way bd-dolt-sync.mjs
+ * finds it (resolveDoltDir): under this checkout, else under the primary checkout that owns the git
+ * common dir. A linked worktree has no embedded database of its own, so without that fallback the
+ * dolt half would be skipped there and the check would still say OK.
  *
  * What "right" means is the consumer's call, in this order:
  *   1. `--expected <url>` on the command line, else
@@ -28,7 +31,7 @@ import fs, { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { embeddedDbCandidates } from './bd-dolt-sync.mjs';
+import { resolveDoltDir } from './bd-dolt-sync.mjs';
 
 /** The environment variable that pins the expected remote (the sync rewrites the prefix). */
 export const EXPECTED_REMOTE_ENV = 'AGENT_TOOLING_BEADS_REMOTE';
@@ -109,9 +112,10 @@ export const DEFAULT_DEPS = {
 
 /**
  * @param {string} repoRoot
- * @param {typeof DEFAULT_DEPS & { expected?: string|null, dbName?: string|null, readdir?: (p: string) => string[] }} [deps]
+ * @param {typeof DEFAULT_DEPS & { expected?: string|null, dbName?: string|null, readdir?: (p: string) => string[], gitCommonDir?: string|null }} [deps]
  *   `expected` pins the remote (see the header); `dbName`/`readdir` are seams for the embedded
- *   database directory lookup.
+ *   database directory lookup; `gitCommonDir` is the absolute git common dir (the primary
+ *   checkout's `.git`), which locates the embedded database from a linked worktree.
  */
 export function check(repoRoot, deps = DEFAULT_DEPS) {
   const configPath = path.join(repoRoot, '.beads', 'config.yaml');
@@ -144,13 +148,18 @@ export function check(repoRoot, deps = DEFAULT_DEPS) {
 
   // The dolt CLI remote is what push/pull actually use; without it they are silent no-ops. Only
   // meaningful once the embedded DB exists, so a pre-bootstrap clone is not failed for it.
-  const doltDir = embeddedDbCandidates(repoRoot, {
+  const gitCommonDir = deps.gitCommonDir ?? null;
+  const doltDir = resolveDoltDir({
+    cwd: repoRoot,
     exists: deps.exists,
+    gitCommonDir,
     dbName: deps.dbName,
     readdir: deps.readdir,
-  }).find(deps.exists);
-  const embeddedRoot = path.join(repoRoot, '.beads', 'embeddeddolt');
-  if (!doltDir && deps.exists(embeddedRoot)) {
+  });
+  const embeddedRoot = [repoRoot, ...(gitCommonDir ? [path.dirname(gitCommonDir)] : [])]
+    .map((root) => path.join(root, '.beads', 'embeddeddolt'))
+    .find((p) => deps.exists(p));
+  if (!doltDir && embeddedRoot) {
     // Not fatal (a pre-bootstrap clone has no database), but never silent: the check that
     // catches a missing dolt CLI remote did not run.
     deps.error(`WARNING: ${embeddedRoot} exists but no database directory could be resolved, so the dolt CLI remote check was SKIPPED.`);
@@ -202,10 +211,17 @@ function isEntryPoint() {
   } catch { return false; }
 }
 
+/** The absolute git common dir of `repoRoot` (the primary checkout's `.git` from a linked worktree), or null. */
+export function gitCommonDirOf(repoRoot, run = DEFAULT_DEPS.run) {
+  const r = run('git', ['rev-parse', '--git-common-dir'], { cwd: repoRoot });
+  return r.status === 0 && r.stdout.trim() ? path.resolve(repoRoot, r.stdout.trim()) : null;
+}
+
 if (isEntryPoint()) {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   process.exitCode = check(repoRoot, {
     ...DEFAULT_DEPS,
+    gitCommonDir: gitCommonDirOf(repoRoot),
     expected: expectedFromArgs(process.argv.slice(2)),
   });
 }
