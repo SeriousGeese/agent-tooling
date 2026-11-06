@@ -89,27 +89,52 @@ export function buildPeople(handles, aliases = {}) {
 }
 
 /**
- * The people configured for a repository. Fail-open: a broken or missing agent-tooling.json
- * reads as nobody configured, never as a throw.
+ * The people configured for a repository, and why they could not be read. Fail-open: a broken
+ * or missing agent-tooling.json never throws. But the two cases are NOT the same:
+ *   - no config file: `error` is null and `people` is empty (nothing was configured);
+ *   - a config that exists and FAILED to load (unreadable, not JSON, invalid): `error` is the
+ *     loader's message, which names the file, and `people` is empty.
+ * A caller that can say so (ask.mjs, the SessionStart banner) must report `error`, or a broken
+ * routing table reads as "no asks".
+ * @param {{ root?: string, from?: string }} [opts] forwarded to the config loader
+ * @returns {{ people: ReturnType<typeof buildPeople>, error: string | null }}
+ */
+export function loadPeople(opts = {}) {
+  // A `people` entry is a handle or a person object with display, actorBases and emails;
+  // peopleOf (the shared loader) gives one shape for both.
+  const { config, error } = tryLoadConfig(opts);
+  const configured = peopleOf(config);
+  const aliases = Object.fromEntries(configured.map((p) => [p.handle, { display: p.display, actorBases: p.actorBases, emails: p.emails }]));
+  return {
+    people: buildPeople(
+      configured.map((p) => p.handle),
+      aliases,
+    ),
+    error: error ?? null,
+  };
+}
+
+/**
+ * The people configured for a repository (see loadPeople for the load error, which this
+ * form drops).
  * @param {{ root?: string, from?: string }} [opts] forwarded to the config loader
  */
 export function peopleFromConfig(opts = {}) {
-  // A `people` entry is a handle or a person object with display, actorBases and emails;
-  // peopleOf (the shared loader) gives one shape for both.
-  const people = peopleOf(tryLoadConfig(opts).config);
-  const aliases = Object.fromEntries(people.map((p) => [p.handle, { display: p.display, actorBases: p.actorBases, emails: p.emails }]));
-  return buildPeople(
-    people.map((p) => p.handle),
-    aliases,
-  );
+  return loadPeople(opts).people;
 }
 
-let cachedPeople = null;
+let cachedLoad = null;
 
 /** The configured people, read once per process. */
 export function defaultPeople() {
-  cachedPeople ??= peopleFromConfig();
-  return cachedPeople;
+  cachedLoad ??= loadPeople();
+  return cachedLoad.people;
+}
+
+/** Why the configured people could not be read (null when they could, or none are configured). */
+export function defaultPeopleLoadError() {
+  cachedLoad ??= loadPeople();
+  return cachedLoad.error;
 }
 
 /** Every valid person key, for error messages and CLI validation. */
@@ -144,9 +169,9 @@ export function askMetaKeys(personKey) {
  * Order:
  *   1. ASK_PERSON env: explicit override, also how you inspect the other person's inbox from
  *      your own machine without impersonating them in bd.
- *   2. The session's actor base (scripts/agent-actor-id.mjs) matched against actorBases, or
- *      starting with `<handle>-`. This is the normal path: BEADS_ACTOR_BASE can be set per
- *      machine.
+ *   2. The session's actor base (scripts/agent-actor-id.mjs) matched EXACTLY against
+ *      actorBases (a bare handle gets `<handle>` and `<handle>-bot`; `bob-jones` is not
+ *      `bob`). This is the normal path: BEADS_ACTOR_BASE can be set per machine.
  *   3. git user.email matched against emails (only people given `emails` aliases), which
  *      covers a plain shell with no agent env at all.
  *

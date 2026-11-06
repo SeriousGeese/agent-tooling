@@ -7,6 +7,10 @@
     "scripts/agent-tooling-config.node-test.mjs",
     "scripts/agent-tooling-sync.mjs",
     "scripts/agent-tooling-sync.node-test.mjs",
+    "scripts/bd-cli.node-test.mjs",
+    "scripts/lib/bd-cli.mjs",
+    "scripts/lib/parse-flags.mjs",
+    "scripts/parse-flags.node-test.mjs",
     "scripts/run-node-tests.mjs",
     "scripts/run-node-tests.node-test.mjs",
     "scripts/session-lock.mjs",
@@ -21,6 +25,7 @@
   "sets": {
     "asks": [
       ".agents/skills/ask-review/SKILL.md",
+      "scripts/ask-config-error.node-test.mjs",
       "scripts/ask-lib.mjs",
       "scripts/ask-lib.node-test.mjs",
       "scripts/ask-sync.node-test.mjs",
@@ -40,6 +45,8 @@
       "scripts/lib/dolt-resilient-pull.sh"
     ],
     "hygiene": [
+      "scripts/bead-chains.mjs",
+      "scripts/bead-chains.node-test.mjs",
       "scripts/epic-hygiene-lib.mjs",
       "scripts/epic-hygiene.mjs",
       "scripts/epic-hygiene.node-test.mjs",
@@ -95,8 +102,6 @@
       "scripts/gate.sh",
       "scripts/gh-rate-limit.node-test.mjs",
       "scripts/lib/gh-rate-limit.mjs",
-      "scripts/lib/parse-flags.mjs",
-      "scripts/parse-flags.node-test.mjs",
       "scripts/pr-metadata.mjs",
       "scripts/pr-metadata.node-test.mjs",
       "scripts/pr-queue-state.mjs",

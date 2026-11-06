@@ -20,6 +20,7 @@ import { shortForm } from './test-support/short-path.mjs';
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 // The gate set's files land.sh runs (and the libs pr-queue-state.mjs imports): the fixture copies them
 // when they are here, and the tests that need them skip when they are not.
+const LAND_RUN_TIMEOUT_MS = 240_000;
 const GATE_FILES = ['pr-queue-state.mjs', 'lib/parse-flags.mjs', 'lib/gh-rate-limit.mjs'];
 const MISSING_GATE = GATE_FILES.filter((f) => !existsSync(join(HERE, f)));
 const NEEDS_GATE = MISSING_GATE.length > 0
@@ -156,8 +157,12 @@ function run(f, args, extraEnv = {}) {
     FAKE_BD: '',
     ...extraEnv,
   };
-  const r = spawnSync('bash', [join(f.primary, 'scripts', 'land.sh'), ...args], { encoding: 'utf8', env, cwd: f.primary, timeout: 60_000 });
-  return { status: r.status, out: `${r.stdout}\n${r.stderr}` };
+  // A loud upper bound on a hung run, never a thing under assertion. The full landing path (polls,
+  // bead checks, worktree-rm) takes about 10s alone on Windows and over 60s on a loaded box, where
+  // a 60s cap killed a healthy run (status null) twice.
+  const r = spawnSync('bash', [join(f.primary, 'scripts', 'land.sh'), ...args], { encoding: 'utf8', env, cwd: f.primary, timeout: LAND_RUN_TIMEOUT_MS });
+  const killed = r.status === null ? `\n[land.sh did not finish: signal ${r.signal}, error ${r.error?.message ?? 'none'}, cap ${LAND_RUN_TIMEOUT_MS}ms]` : '';
+  return { status: r.status, out: `${r.stdout}\n${r.stderr}${killed}` };
 }
 
 // The fake worktree-rm.sh records the path bash handed it. On Windows Git Bash that is the MSYS form of the temp
