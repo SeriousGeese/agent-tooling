@@ -158,11 +158,51 @@ test('resolveDoltDir without a database name uses the single database directory 
   const found = resolveDoltDir({
     cwd: path.join(root, 'src'),
     dbName: null,
-    exists: (p) => p === base || p === want,
+    exists: (p) => p === base || p === want || p === path.join(want, '.dolt'),
     readdir: (p) => (p === base ? ['only-db'] : []),
     gitCommonDir: null,
   });
   assert.equal(found, want);
+});
+
+test('resolveDoltDir without a name ignores the .dolt and .doltcfg dirs a sql-server leaves beside the database', () => {
+  const root = path.join('C:', 'repo');
+  const base = path.join(root, '.beads', 'embeddeddolt');
+  const want = path.join(base, 'beadsdb');
+  const found = resolveDoltDir({
+    cwd: root,
+    dbName: null,
+    exists: (p) => p === base || p === want || p === path.join(want, '.dolt'),
+    readdir: (p) => (p === base ? ['.dolt', '.doltcfg', 'beadsdb'] : []),
+    gitCommonDir: null,
+  });
+  assert.equal(found, want);
+});
+
+test('resolveDoltDir without a name does not count a directory that holds no .dolt', () => {
+  const root = path.join('C:', 'repo');
+  const base = path.join(root, '.beads', 'embeddeddolt');
+  const found = resolveDoltDir({
+    cwd: root,
+    dbName: null,
+    exists: (p) => p === base || p === path.join(base, 'stray'),
+    readdir: (p) => (p === base ? ['stray'] : []),
+    gitCommonDir: null,
+  });
+  assert.equal(found, null);
+});
+
+test('resolveDoltDir without a name never guesses between several real databases', () => {
+  const root = path.join('C:', 'repo');
+  const base = path.join(root, '.beads', 'embeddeddolt');
+  const found = resolveDoltDir({
+    cwd: root,
+    dbName: null,
+    exists: () => true,
+    readdir: (p) => (p === base ? ['.dolt', 'a', 'b'] : []),
+    gitCommonDir: null,
+  });
+  assert.equal(found, null);
 });
 
 test('resolveDoltDir without a database name never guesses between several', () => {

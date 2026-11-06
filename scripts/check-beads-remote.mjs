@@ -149,6 +149,13 @@ export function check(repoRoot, deps = DEFAULT_DEPS) {
     dbName: deps.dbName,
     readdir: deps.readdir,
   }).find(deps.exists);
+  const embeddedRoot = path.join(repoRoot, '.beads', 'embeddeddolt');
+  if (!doltDir && deps.exists(embeddedRoot)) {
+    // Not fatal (a pre-bootstrap clone has no database), but never silent: the check that
+    // catches a missing dolt CLI remote did not run.
+    deps.error(`WARNING: ${embeddedRoot} exists but no database directory could be resolved, so the dolt CLI remote check was SKIPPED.`);
+    deps.error('  Set "beadPrefix" in agent-tooling.json to the database directory name (or leave exactly one database there).');
+  }
   if (doltDir) {
     const r = deps.run('dolt', ['remote', '-v'], { cwd: doltDir });
     if (r.status !== 0) {

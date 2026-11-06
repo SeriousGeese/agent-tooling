@@ -151,6 +151,23 @@ describe('check', () => {
     assert.equal(check(REPO, deps), 0);
   });
 
+  test('warns, without failing, when embeddeddolt exists but no database resolved', () => {
+    const deps = makeDeps({ config: `sync:\n    remote: "${EXPECTED_REMOTE}"\n`, doltDir: false });
+    const base = path.join(REPO, '.beads', 'embeddeddolt');
+    const inner = deps.exists;
+    deps.exists = (p) => p === base || inner(p);
+    assert.equal(check(REPO, deps), 0);
+    const out = deps.errors.join('\n');
+    assert.ok(out.includes('SKIPPED'));
+    assert.ok(out.includes('beadPrefix'));
+  });
+
+  test('stays silent pre-bootstrap, when there is no embeddeddolt directory at all', () => {
+    const deps = makeDeps({ config: `sync:\n    remote: "${EXPECTED_REMOTE}"\n`, doltDir: false });
+    assert.equal(check(REPO, deps), 0);
+    assert.deepEqual(deps.errors, []);
+  });
+
   test('reports a missing config rather than throwing', () => {
     const deps = makeDeps({ config: undefined });
     assert.equal(check(REPO, deps), 1);

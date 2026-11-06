@@ -420,12 +420,26 @@ export function parseSyncJson(text) {
 }
 
 /**
- * The database directory name under `.beads/embeddeddolt/`: bd names it after the issue prefix.
+ * The database directory name under `.beads/embeddeddolt/`.
+ *
+ * ASSUMPTION: that name equals the configured `beadPrefix` (bd derives the database name from
+ * the issue prefix at init). If a repository's database was named otherwise, the lookup does not
+ * fail loudly: it resolves a directory that does not exist, and the run reports "sync NOT
+ * verified". Set `beadPrefix` in agent-tooling.json to the real directory name to fix that.
+ *
  * Best effort: the consumer's configured `beadPrefix` when the config loader is present, else
- * null, in which case resolveDoltDir looks for the single database directory that exists.
+ * null, in which case resolveDoltDir looks for the single real database directory (one holding
+ * a `.dolt` directory) under embeddeddolt/. A config file that fails to load is reported once
+ * on stderr, because it otherwise surfaces only as "could not locate the DB".
  */
+let configErrorReported = false;
 function configuredDbName() {
-  return CONFIG?.tryLoadConfig?.().config?.beadPrefix ?? null;
+  const loaded = CONFIG?.tryLoadConfig?.();
+  if (loaded?.error && !configErrorReported) {
+    configErrorReported = true;
+    console.warn(`[bd-dolt-sync] agent-tooling.json could not be loaded (${loaded.error}); not using its beadPrefix.`);
+  }
+  return loaded?.config?.beadPrefix ?? null;
 }
 
 /**
@@ -456,6 +470,10 @@ export function resolveDoltDir({ cwd, exists, gitCommonDir, dbName = configuredD
 /**
  * The embedded database directory a workspace root would hold: `<root>/.beads/embeddeddolt/<db>`.
  * Returns [] when `dbName` is unknown and the directory does not hold exactly one database.
+ *
+ * Without a name, only a REAL database directory counts: not dot-prefixed, and holding a
+ * `.dolt` directory. In server mode `dolt sql-server` runs in embeddeddolt/ itself and creates
+ * `.dolt/` and `.doltcfg/` beside the database, which must not read as extra databases.
  */
 export function embeddedDbCandidates(root, { exists, dbName = configuredDbName(), readdir } = {}) {
   const base = path.join(root, '.beads', 'embeddeddolt');
@@ -468,7 +486,8 @@ export function embeddedDbCandidates(root, { exists, dbName = configuredDbName()
   } catch {
     return [];
   }
-  return names.length === 1 ? [path.join(base, names[0])] : [];
+  const real = names.filter((n) => !n.startsWith('.') && exists(path.join(base, n, '.dolt')));
+  return real.length === 1 ? [path.join(base, real[0])] : [];
 }
 
 /*
