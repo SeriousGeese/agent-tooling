@@ -96,6 +96,13 @@ test('ask.mjs main(): a load error is reported and exits 1 before any routing, -
   assert.equal(main(['list'], deps), 1);
   assert.equal(main(['--help'], deps), 0);
   assert.match(out.log.at(-1), /People: \(none loaded: \/x\/agent-tooling\.json: not valid JSON \(boom\)\)/);
+
+  // Independent of the repository the suite runs in: a consumer whose own agent-tooling.json lists
+  // people must still print the load error it was handed, never its real routing table.
+  const withTable = { ...deps, people: [{ key: 'zed' }] };
+  assert.equal(main(['--help'], withTable), 0);
+  assert.match(out.log.at(-1), /People: \(none loaded: /);
+  assert.doesNotMatch(out.log.at(-1), /People: zed/);
 });
 
 test('ask.mjs as a process: malformed config prints one error naming the file and exits non-zero', () => {

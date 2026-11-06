@@ -61,7 +61,10 @@ function usage(people, loadError = null) {
   const none = loadError
     ? `(none loaded: ${String(loadError).replace(/\s+/g, ' ').trim()})`
     : '(none configured: add handles to "people" in agent-tooling.json)';
-  const known = personKeys(people).join(', ') || none;
+  // A load error wins: `people` may be undefined here, and personKeys() would then fall back to
+  // the default loader, which in a consumer with a working config lists real people next to a
+  // load error the caller was handed.
+  const known = loadError ? none : personKeys(people).join(', ') || none;
   return `
 Asks: route a bead to a person for an async decision.
 
