@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bead Workflow"
+  short_description: "Claim, fix, verify, and PR beads"
+  default_prompt: "Use $bead-workflow ready to pick suitable beads, claim them, fix them on one branch, verify, and open a PR."

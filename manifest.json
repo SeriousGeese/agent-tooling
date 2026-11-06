@@ -55,7 +55,18 @@
       "scripts/pr-queue-state.node-test.mjs"
     ],
     "session": [],
-    "skills": [],
+    "skills": [
+      ".agents/skills/bead-chains/SKILL.md",
+      ".agents/skills/bead-workflow/SKILL.md",
+      ".agents/skills/bead-workflow/agents/openai.yaml",
+      ".agents/skills/beads-bulk/SKILL.md",
+      ".agents/skills/beads-hygiene/SKILL.md",
+      ".agents/skills/dependabot-handler/SKILL.md",
+      ".agents/skills/mvp-readiness/SKILL.md",
+      ".agents/skills/prompt-next-work/SKILL.md",
+      ".agents/skills/recurring-task/SKILL.md",
+      ".agents/skills/window-review/SKILL.md"
+    ],
     "docs": [],
     "ritual": []
   }

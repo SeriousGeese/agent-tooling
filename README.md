@@ -38,7 +38,7 @@ config loader and the node:test runner). Everything else is in a named set, chos
 | `worktree` | claim.sh, worktree creation, removal, landing and session locks |
 | `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata (and the parse-flags and gh-rate-limit helpers they import). Knobs: `AGENT_TOOLING_PR_WORKFLOW`, `AGENT_TOOLING_GATE_CHECK`, `pr-metadata --migrations-dir` |
 | `session` | Session phase and tracker, hooksPath repair |
-| `skills` | Process skills under `.agents/skills/` |
+| `skills` | Process skills under `.agents/skills/`: `bead-workflow` (with its `agents/openai.yaml`), `beads-bulk`, `beads-hygiene`, `prompt-next-work`, `bead-chains`, `mvp-readiness`, `recurring-task`, `window-review`, `dependabot-handler`. (`ask-review` ships in `asks`, with the script it drives.) Each may read a consumer-owned `LOCAL.md`, see Skill overlays |
 | `docs` | The generic halves of the agent docs under `docs/agents/shared/` |
 | `ritual` | The agent-ritual conformance smoke |
 
@@ -73,6 +73,27 @@ Then:
 Some advice belongs to one consumer only. A skill here may reference a `LOCAL.md` beside its
 `SKILL.md`; the consumer writes that file and sync never reads, writes or checks it. It is the
 same idea as CICD's `<guard>.hint.txt`.
+
+### Skill overlays
+
+The skills are prose, so the generic text keeps every rule and its reasoning and drops only what
+is one repository's: its test and gate commands, its CI job names, its feature-toggle policy,
+its people, bead ids, hostnames and host sizing, and any script that is not vendored from here.
+Each vendored `SKILL.md` says near the top: "If a `LOCAL.md` exists beside this file, read it
+first: it holds this repository's specifics and overrides the generic defaults here." The skill
+reads correctly with no `LOCAL.md`; with one, the overlay wins.
+
+- **Where it lives:** `.agents/skills/<skill>/LOCAL.md`, next to the `SKILL.md` it adjusts.
+  Write it as a list of overrides keyed to the skill's own step or section numbers (the verify
+  command for step 6, the toggle policy for the epic rule, the host table for the wave-sizing
+  section), and name the consumer freely: the neutrality check does not run on it.
+- **Sync never touches it.** It is not in `manifest.json` and a re-sync leaves it alone.
+  `tests/contract/skills.node-test.mjs` fails if a manifest entry is a `LOCAL.md`, if a vendored
+  `SKILL.md` lacks `name` and `description` frontmatter, or if one mentions `LOCAL.md` without
+  introducing it as optional.
+- **Config placeholders** cover what is a value rather than prose: hatch names are written
+  `AGENT_TOOLING_*` (rewritten to the consumer's prefix on the way in), bead ids as `<bead-id>`,
+  and the worktree root and people come from `agent-tooling.json`.
 
 ## Changing a file
 
