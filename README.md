@@ -27,15 +27,15 @@ consumer at a pinned commit, at the same paths they have here, by
 ## Sets
 
 `manifest.json` lists every vendored file. `base` ships to every consumer (this sync, the
-config loader and the node:test runner). Everything else is in a named set, chosen with
+config loader, the node:test runner and the actor id and test cleanup helpers the sets share). Everything else is in a named set, chosen with
 `--set`:
 
 | Set | Contents |
 |---|---|
-| `asks` | Routing a bead to a person for a decision: ask.mjs, the inbox banner, the actor id |
+| `asks` | Routing a bead to a person for a decision: ask.mjs, the inbox banner |
 | `beads` | The Dolt-backed beads sync toolkit: verified pull/push (bd-dolt-sync), bd repo-churn guard, sync-remote drift check, resilient-pull shell lib |
 | `hygiene` | Epic hygiene, idea inbox, tooling-friction log |
-| `worktree` | claim.sh, worktree creation, removal, landing and session locks |
+| `worktree` | claim.sh and its fresh-claim guard (claim-age), worktree creation with `--await`, the per-worktree dev server and port. See [The worktree set](#the-worktree-set) |
 | `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata (and the parse-flags and gh-rate-limit helpers they import). Knobs: `AGENT_TOOLING_PR_WORKFLOW`, `AGENT_TOOLING_GATE_CHECK`, `pr-metadata --migrations-dir` |
 | `session` | Session phase and tracker, hooksPath repair |
 | `skills` | Process skills under `.agents/skills/`: `bead-workflow` (with its `agents/openai.yaml`), `beads-bulk`, `beads-hygiene`, `prompt-next-work`, `bead-chains`, `mvp-readiness`, `recurring-task`, `window-review`, `dependabot-handler`. (`ask-review` ships in `asks`, with the script it drives.) Each may read a consumer-owned `LOCAL.md`, see Skill overlays |
@@ -43,6 +43,46 @@ config loader and the node:test runner). Everything else is in a named set, chos
 | `ritual` | The agent-ritual conformance smoke |
 
 `all` is every set; `none` is `base` alone. A set may be empty until its files move here.
+
+## The worktree set
+
+`worktree-new.sh`, `claim.sh`, `worktree-dev.sh` and `worktree-port.sh`, with their libs
+(`lib/agent-config.sh`, `lib/git-no-fsmonitor.sh`, `lib/to-node-path.sh`). Consumer values come from
+`agent-tooling.json`: `packageManager` (npm, pnpm, yarn or bun; see below), `worktreeRoot`, `worktreeNamePattern`
+(`<repo>`, `<slug>`), `worktreeScripts` (the commands printed in hints) and `claimHelper`.
+
+**Package managers.** npm is fully supported. pnpm, yarn (classic only: berry rejects
+`--frozen-lockfile --ignore-scripts`) and bun install, with these gaps, and a one-line warning is
+printed when one of them installs: dependencies whose install scripts were skipped are NOT rebuilt
+(npm rebuilds the ones that need it), there is no lockfile-versus-installed version-drift check, and
+staleness is the lockfile's mtime against the manager's record file (for bun that record is
+`node_modules` itself, a directory mtime, so it is weak).
+
+**Printed commands.** The `--install` fix commands and the `--await` hint name `worktree-new.sh` by
+absolute path, so they work pasted from any directory, unless `worktreeScripts` overrides them.
+
+**Runtime dependencies outside this set.** claim.sh needs `agent-actor-id.mjs` (base, always
+present), `bd-dolt-sync.mjs` (the `beads` set) and the `bd` CLI. Without the beads set it refuses
+before touching `bd`, naming the missing file and the set that ships it, so adopt
+`--set beads,worktree` together. Likewise `claim-worktree-first.node-test.mjs` skips itself, with that
+reason, when `bd-dolt-sync.mjs` is absent. If `claim-age.mjs` crashes (any exit other than its refusal code 3),
+the claim proceeds and a stderr warning says the fresh-claim check did not run. The creation scripts need only git, bash and node; every config
+read degrades to the defaults when `node` or the config module is absent.
+
+**Consumer hint file.** Facts about a consumer's dependency tree live in the consumer-owned,
+never-synced `scripts/worktree-new.hint.sh` (or the file named by `WORKTREE_NEW_HINT_FILE`):
+
+| Variable | Meaning |
+|---|---|
+| `WORKTREE_NEW_NATIVE_PREBUILDS` | Packages that ship or compile a native binding. `--await` calls a tree incomplete (exit 1) when one has none, and the post-install rebuild skips them. Default: none |
+| `WORKTREE_NEW_REQUIRED_PACKAGES` | Packages that must exist under `node_modules`. Default: every dependency and devDependency |
+| `WORKTREE_NEW_BROWSER_CHECK` | `auto` (only when package.json declares Playwright), `1` or `0`. A missing browser is exit 3: deps are fine, only e2e is unavailable |
+| `WORKTREE_NEW_BROWSERS` | Browsers to check and to print the install command for. Default: chromium |
+
+`--await` exits 0 (ready), 1 (not ready), 3 (ready except the e2e browsers). Hatches:
+`AGENT_TOOLING_WORKTREE_ROOT`, `AGENT_TOOLING_WORKTREE_NO_LOCK`,
+`AGENT_TOOLING_ALLOW_CLAIM_STEAL`, `AGENT_TOOLING_CLAIM_COLLISION_HOURS` (default 4),
+`AGENT_TOOLING_ALLOW_SHARED_CLAIM_ACTOR`, `AGENT_TOOLING_DEV_SERVER_PATTERN`.
 
 ### The `hygiene` set
 
