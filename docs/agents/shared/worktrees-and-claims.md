@@ -8,10 +8,10 @@ before any git-mutating command, and remove only worktrees that are provably you
 rule below exists because the cheaper shortcut failed in a way that was hard to see. Read the
 section when a rule looks like ceremony, or when recovering from a broken worktree.
 
-Scripts named here ship in these sets: `claim.sh`, `worktree-new.sh`, `worktree-rm.sh`, `land.sh`
-and `session-lock.mjs` in the `worktree` set; `repair-hookspath.mjs` in the `session` set;
-`agent-actor-id.mjs` in the `asks` set; `bd-dolt-sync.mjs` in the `beads` set; `gate.sh` in the
-`gate` set. Hatch variables carry the repository's env prefix (`envPrefix` in
+Scripts named here ship in these places: `claim.sh`, `worktree-new.sh`, `worktree-rm.sh`, `land.sh`
+and `session-lock.mjs` in the `worktree` set; `bd-dolt-sync.mjs` in the `beads` set; `gate.sh` in the
+`gate` set; `agent-actor-id.mjs` in base, which every consumer gets. `repair-hookspath.mjs` is not shipped
+yet (the `session` set is empty), so a consumer carries its own. Hatch variables carry the repository's env prefix (`envPrefix` in
 `agent-tooling.json`). The Dolt side
 of the same ritual (sync, locks, conflicts) is in [beads-sync.md](beads-sync.md).
 
