@@ -27,7 +27,7 @@
 #      (`held review`), a merge conflict (`held conflict`) or a red required check on the current
 #      head (`held gate`) keeps the PR out of the queue until its author acts, so waiting
 #      to the cap only hides it. A held PR once sat armed and silent for 23 hours.
-#   3. Waits until the `beads-synced` tag contains the merge commit. the close-beads workflow
+#   3. Waits until the `beads-synced` tag contains the merge commit. The close-beads workflow
 #      (AGENT_TOOLING_CLOSE_BEADS_WORKFLOW) moves that
 #      tag to the pushed head only after it ran one close per PR in
 #      the range and every close exited 0 with no bead in a FAILED or UNKNOWN-ORIGIN bucket, so "the
@@ -80,9 +80,9 @@
 # state directory). Test: scripts/land.node-test.mjs.
 #
 # Config (all names carry the consumer's env prefix after sync):
-#   AGENT_TOOLING_CLOSE_BEADS_WORKFLOW  REQUIRED. The workflow file that closes a merged PR's beads and
-#                                       moves the synced tag; named in messages. No default: it is
-#                                       the consumer's own file name.
+#   AGENT_TOOLING_CLOSE_BEADS_WORKFLOW  The workflow file that closes a merged PR's beads and
+#                                       moves the synced tag; named in messages (default: the
+#                                       generic phrase "the close-beads workflow").
 #   AGENT_TOOLING_SYNCED_TAG            the tag that moves once the close ran (default beads-synced)
 #   AGENT_TOOLING_GH_BACKOFF_FLOOR_SECONDS  rate-limit back-off floor (default 60)
 #   AGENT_TOOLING_PR_WATCH=0            skip the optional per-machine watcher
@@ -103,7 +103,7 @@ BACKOFF_MAX="${LAND_BACKOFF_MAX_SECONDS:-1800}"
 RATE_LIMIT_RE='rate limit|RATE_LIMITED|abuse detection|HTTP 429'
 TIMEOUT_MIN="${LAND_TIMEOUT_MINUTES:-90}"
 TAG="${AGENT_TOOLING_SYNCED_TAG:-beads-synced}"
-CLOSE_WORKFLOW="${AGENT_TOOLING_CLOSE_BEADS_WORKFLOW:-}"
+CLOSE_WORKFLOW="${AGENT_TOOLING_CLOSE_BEADS_WORKFLOW:-the close-beads workflow}"
 
 usage() {
   cat <<'USAGE'
@@ -202,12 +202,6 @@ require_script lib/parse-flags.mjs gate "pr-queue-state.mjs imports it"
 require_script lib/gh-rate-limit.mjs gate "pr-queue-state.mjs imports it"
 if [ "$NO_WAIT" != "1" ] && [ -z "${LAND_SYNC_CMD:-}" ]; then
   require_script bd-dolt-sync.mjs beads "the verified bead pull after the close"
-fi
-if [ -z "$CLOSE_WORKFLOW" ]; then
-  echo "ERROR: AGENT_TOOLING_CLOSE_BEADS_WORKFLOW is not set. Name the workflow file that closes a merged PR's" >&2
-  echo "  beads and moves the '$TAG' tag (set it in the environment your agents run with); land.sh" >&2
-  echo "  names it in its messages and has no default for it." >&2
-  exit 2
 fi
 
 # ── the PR ──────────────────────────────────────────────────────────────────────────────────────

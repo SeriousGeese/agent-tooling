@@ -544,14 +544,12 @@ gated('the verified bead pull is the beads set\'s: absent, and no LAND_SYNC_CMD,
   }
 });
 
-test('the close-beads workflow has no default: unset, land.sh names the knob and stops', () => {
+gated('the close-beads workflow defaults to a generic phrase in messages when unset', () => {
   const f = fixture();
   try {
-    const r = run(f, [f.worktree], { AGENT_TOOLING_CLOSE_BEADS_WORKFLOW: '' });
-    assert.equal(r.status, 2, r.out);
-    assert.match(r.out, /AGENT_TOOLING_CLOSE_BEADS_WORKFLOW is not set/);
-    assert.equal(existsSync(f.worktree), true);
-    assert.equal(existsSync(join(f.root, 'gh-calls')), false, 'nothing was asked of GitHub');
+    const r = run(f, [f.worktree, '--no-wait'], { AGENT_TOOLING_CLOSE_BEADS_WORKFLOW: '', FAKE_COMPARE: 'behind' });
+    assert.doesNotMatch(r.out, /is not set/);
+    assert.match(r.out, /does not contain the merge yet.*the close-beads workflow has not closed/);
   } finally {
     removeTempDir(f.root, 'land.node-test');
   }

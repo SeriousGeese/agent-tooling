@@ -8,7 +8,7 @@
 //   touch           Hook entry (SessionStart, PreToolUse on shell tools, PostToolUse on
 //                   EnterWorktree, SubagentStop, SessionEnd). Reads the hook's stdin JSON and
 //                   records "session <id> is in worktree <toplevel>" as
-//                   <git common dir>/session-locks/<session id>[--<agent id>].json, or deletes
+//                   <git common dir>/<prefix>-session-locks/<session id>[--<agent id>].json, or deletes
 //                   it when the agent or session ends. Silent, and always exits 0: a lock that
 //                   fails to write must never block a tool call.
 //   check <path>    Exit 3, naming each one on stderr, when a live session OTHER than the
@@ -33,7 +33,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const LOCK_DIR_NAME = 'session-locks';
+// Derived from the neutral-prefix token so a consumer's sync yields `<prefix>-session-locks` (the name
+// existing consumer hooks already write). Never spell the literal: old and new hooks must agree.
+export const LOCK_DIR_NAME = 'AGENT_TOOLING_SESSION_LOCKS'.toLowerCase().replaceAll('_', '-');
 /** A record already this fresh, for the same worktree and pid, is not rewritten. */
 export const REFRESH_MS = 5 * 60_000;
 /** A live pid keeps a record live for this long after its session's last shell command. */

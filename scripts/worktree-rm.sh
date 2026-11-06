@@ -648,7 +648,9 @@ else
     # Usually another process's cwd is in it (the session that made it, a dev
     # server). Record it so a periodic sweep (a consumer-owned job that reads this file) can
     # finish the delete.
-    PENDING="$(git -C "$PRIMARY" rev-parse --path-format=absolute --git-common-dir)/worktree-pending-delete.txt"
+    # The name carries the consumer prefix (lowercased, dashed) so a consumer sweep job keeps its file.
+    PENDING_NAME="$(printf %s AGENT_TOOLING_WORKTREE_PENDING_DELETE | tr 'A-Z_' 'a-z-').txt"
+    PENDING="$(git -C "$PRIMARY" rev-parse --path-format=absolute --git-common-dir)/$PENDING_NAME"
     printf '%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TARGET_ABS" >> "$PENDING" || true
     echo "ERROR: could not delete $TARGET_ABS. Something still holds it open (a session or dev server in it)." >&2
     echo "  Recorded in $PENDING for a periodic worktree sweep to retry. Or, once whatever holds it" >&2

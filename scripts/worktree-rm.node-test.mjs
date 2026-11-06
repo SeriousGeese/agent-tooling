@@ -1583,3 +1583,13 @@ test('--stale with a stale copy of the script still leads with READ THIS FIRST a
     removeTempDir(f.root, 'worktree-rm.node-test');
   }
 });
+
+// The pending-delete file a consumer sweep job reads is named from the neutral-prefix token, so a
+// synced consumer keeps the file name its own sweep already reads. A hardcoded literal would orphan it.
+test('worktree-rm.sh derives its pending-delete file name from the prefix token', () => {
+  const src = readFileSync(script, 'utf8');
+  assert.match(src, /AGENT_TOOLING_WORKTREE_PENDING_DELETE/);
+  assert.doesNotMatch(src, /[a-z]-worktree-pending-delete|\bworktree-pending-delete\.txt/);
+  const name = execFileSync('bash', ['-c', "printf %s AGENT_TOOLING_WORKTREE_PENDING_DELETE | tr 'A-Z_' 'a-z-'"], { encoding: 'utf8' });
+  assert.equal(name, 'agent-tooling-worktree-pending-delete');
+});

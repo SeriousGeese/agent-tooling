@@ -76,14 +76,14 @@ candidates and is the report a consumer's stale-worktree banner reads (point `wo
 it): the `  MERGED  <path>  [<branch>]` lines, the `[worktree-stale] N of M` line and the `READ THIS FIRST`
 marker are a parsed interface. `session-lock.mjs touch` is the hook entry that records which worktree each
 session is in; wire it as in `reference/settings.json`. A removal that cannot finish records the path in
-`<git common dir>/worktree-pending-delete.txt` for a consumer-owned sweep job to retry. Knobs:
+`<git common dir>/<prefix>-worktree-pending-delete.txt` (the consumer prefix, lowercased) for a consumer-owned sweep job to retry. Knobs:
 `WORKTREE_RM_SKIP_GH=1` (offline: no `gh` lookups, which only ever removes nominations) and
 `WORKTREE_RM_OPEN_PR_LIMIT` (default 1000).
 
 `land.sh` waits for a PR to merge and for the close-beads run, checks every `Fixes:` bead is closed, then
 removes the worktree and branch. The repo comes from the `origin` remote (override `REPO=owner/repo`);
 bead ids use `beadPrefix` from `agent-tooling.json`. Knobs: `AGENT_TOOLING_CLOSE_BEADS_WORKFLOW`
-(required, no default: the workflow file that closes beads, named in messages), `AGENT_TOOLING_SYNCED_TAG`
+(optional: the workflow file that closes beads, named in messages; default the phrase "the close-beads workflow"), `AGENT_TOOLING_SYNCED_TAG`
 (default `beads-synced`), `AGENT_TOOLING_GH_BACKOFF_FLOOR_SECONDS` (shared with the gate set, default 60),
 `AGENT_TOOLING_PR_WATCH=0` (skip the optional per-machine watcher), and `LAND_POLL_SECONDS`,
 `LAND_TIMEOUT_MINUTES`, `LAND_BACKOFF_MAX_SECONDS`.
