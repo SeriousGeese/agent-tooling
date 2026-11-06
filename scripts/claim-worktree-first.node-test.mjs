@@ -62,7 +62,7 @@ function stubbedEnv(dir) {
   const key = Object.keys(process.env).find((k) => k.toLowerCase() === 'path') ?? 'PATH';
   const env = { ...process.env, [key]: `${dir}${path.delimiter}${process.env[key] ?? ''}`, BD_CLI: bdCliIn(dir) };
   // A host AGENT_TOOLING_WORKTREE_ROOT would put the fixture worktrees in the REAL shared worktree dir,
-  // where they outlive the sandbox and collide with the next run's (as worktree-new.node-test does).
+  // where they outlive the sandbox and collide with the next run's (as the worktree-new-*.node-test files do).
   for (const k of Object.keys(env)) if (k.toUpperCase() === 'AGENT_TOOLING_WORKTREE_ROOT') delete env[k];
   return env;
 }

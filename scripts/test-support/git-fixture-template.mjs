@@ -44,12 +44,13 @@ function spellingsOf(p) {
 
 /**
  * [old, new] pairs: every spelling of `from` (and of its realpath, which git may have resolved it
- * to) against the same spelling of `to` (and of its realpath). Longest first, so a spelling is never
+ * to; `.native`, because plain realpathSync leaves an 8.3 short name such as RUNNER~1 unexpanded
+ * while git writes the long spelling) against the same spelling of `to` (and of its realpath). Longest first, so a spelling is never
  * partly replaced by a shorter one it contains.
  */
 function replacements(from, to) {
   const pairs = new Map();
-  for (const [a, b] of [[from, to], [fs.realpathSync(from), fs.realpathSync(to)]]) {
+  for (const [a, b] of [[from, to], [fs.realpathSync.native(from), fs.realpathSync.native(to)]]) {
     const olds = spellingsOf(a);
     const news = spellingsOf(b);
     olds.forEach((o, i) => { if (!pairs.has(o)) pairs.set(o, news[i]); });
