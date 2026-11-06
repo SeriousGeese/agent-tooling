@@ -1,0 +1,38 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Plain node and no install step, on purpose: everything here is vendored into consumers
+  # that may have no package manager, so a suite that only passes with node_modules present
+  # would be a lie. Windows runs too because most consumers' agents run there.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Actions are pinned to full commit SHAs (a tag can be moved); the comment is the version.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Suites
+        shell: bash
+        run: node scripts/run-node-tests.mjs agent-tooling "scripts/**/*.node-test.mjs" "tests/**/*.node-test.mjs"
