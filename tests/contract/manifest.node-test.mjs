@@ -122,3 +122,36 @@ test('the neutral-text pattern catches what it is meant to (so a clean result me
   }
   for (const s of ['AGENT_TOOLING_ALLOW_X', 'bd-abc12', 'scripts/claim.sh']) assert.doesNotMatch(s, NON_NEUTRAL, s);
 });
+
+// 4. Exit without truncating. On Linux, stdout and stderr to a pipe are asynchronous in Node,
+//    so process.exit() can end the process with a report still queued while the status stays
+//    0. A vendored script sets process.exitCode and lets Node drain; a hard exit that is truly
+//    needed flushes first, `process.stdout.write('', () => process.exit(code))`, which this
+//    does not match. Consumers can carry the same guardrail over their whole tree, so a
+//    vendored offender would fail there.
+export const BANNED_EXIT_SHAPES = [
+  { name: 'process.exit(<call>)', re: /process\.exit\(\s*(?:await\s+)?[A-Za-z_$][\w$.]*\(/ },
+  { name: '(code) => process.exit(code)', re: /\(\s*([A-Za-z_$][\w$]*)\s*\)\s*=>\s*process\.exit\(\s*\1\s*\)/ },
+  { name: 'code => process.exit(code)', re: /(?<![\w$)])([A-Za-z_$][\w$]*)\s*=>\s*process\.exit\(\s*\1\s*\)/ },
+];
+
+const stripJsComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+const exitHits = (src) => BANNED_EXIT_SHAPES.filter((s) => s.re.test(stripJsComments(src))).map((s) => s.name);
+
+test('the exit-shape scan sees each banned form and passes the flushing hard exit', () => {
+  assert.deepEqual(exitHits('process.exit(main());'), ['process.exit(<call>)']);
+  assert.deepEqual(exitHits('process.exit(await run(argv));'), ['process.exit(<call>)']);
+  assert.deepEqual(exitHits('main().then((code) => process.exit(code));'), ['(code) => process.exit(code)']);
+  assert.deepEqual(exitHits('main().then(c => process.exit(c));'), ['code => process.exit(code)']);
+  assert.deepEqual(exitHits("process.stdout.write('', () => process.exit(code));"), []);
+  assert.deepEqual(exitHits('process.exit(1); process.exitCode = code;'), []);
+  assert.deepEqual(exitHits('// process.exit(main())'), [], 'comment-blind');
+});
+
+test('no vendored script exits with process.exit(<call>) or a forwarding arrow', () => {
+  const offenders = [];
+  for (const file of listed.filter((f) => /\.(mjs|cjs|js)$/.test(f) && !/\.(node-)?test\.mjs$/.test(f))) {
+    for (const name of exitHits(readFileSync(path.join(REPO, file), 'utf8'))) offenders.push(`${file}: ${name}`);
+  }
+  assert.deepEqual(offenders, [], 'set process.exitCode instead, so piped stdout is never truncated');
+});
