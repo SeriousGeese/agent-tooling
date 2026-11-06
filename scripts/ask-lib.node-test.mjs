@@ -104,6 +104,16 @@ test('the people come from agent-tooling.json, and a missing or broken file mean
     assert.deepEqual(peopleFromConfig({ root: dir }), [], 'fail-open: a broken config reads as nobody');
     rmSync(path.join(dir, 'agent-tooling.json'));
     assert.deepEqual(peopleFromConfig({ root: dir }), []);
+    // A person object carries the actor bases and emails a session is recognised by.
+    writeFileSync(
+      path.join(dir, 'agent-tooling.json'),
+      JSON.stringify({ people: ['erin', { handle: 'frank', display: 'Frank F.', actorBases: ['frank-fisher', 'ffisher-bot'], emails: ['frank@example.com'] }] }),
+    );
+    const configured = peopleFromConfig({ root: dir });
+    assert.equal(personByKey('frank', configured).display, 'Frank F.');
+    assert.equal(resolvePerson({ env: {}, actorBase: 'ffisher-bot', people: configured })?.key, 'frank');
+    assert.equal(resolvePerson({ env: {}, actorBase: 'someone-else', gitEmail: 'FRANK@example.com', people: configured })?.key, 'frank');
+    assert.equal(resolvePerson({ env: {}, actorBase: 'erin-bot', people: configured })?.key, 'erin');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

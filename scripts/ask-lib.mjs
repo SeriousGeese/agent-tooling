@@ -44,7 +44,7 @@
 // parameter is omitted the configured list is read once and cached. Nothing here calls bd,
 // touches the filesystem itself or exits the process. The bd-touching CLI is scripts/ask.mjs;
 // the SessionStart banner is scripts/hooks/ask-inbox.mjs.
-import { tryLoadConfig } from './agent-tooling-config.mjs';
+import { peopleOf, tryLoadConfig } from './agent-tooling-config.mjs';
 
 const clip = (text, limit) => {
   const s = String(text ?? '').trim();
@@ -92,7 +92,14 @@ export function buildPeople(handles, aliases = {}) {
  * @param {{ root?: string, from?: string }} [opts] forwarded to the config loader
  */
 export function peopleFromConfig(opts = {}) {
-  return buildPeople(tryLoadConfig(opts).config.people);
+  // A `people` entry is a handle or a person object with display, actorBases and emails;
+  // peopleOf (the shared loader) gives one shape for both.
+  const people = peopleOf(tryLoadConfig(opts).config);
+  const aliases = Object.fromEntries(people.map((p) => [p.handle, { display: p.display, actorBases: p.actorBases, emails: p.emails }]));
+  return buildPeople(
+    people.map((p) => p.handle),
+    aliases,
+  );
 }
 
 let cachedPeople = null;
