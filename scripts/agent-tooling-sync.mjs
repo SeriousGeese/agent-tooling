@@ -423,19 +423,22 @@ async function main() {
   return 0;
 }
 
-/** Real path, or the resolved one when it cannot be read. */
-const real = (p) => {
+/**
+ * True when this module is the process entry point. Compared through realpath on both sides:
+ * node resolves import.meta.url through symlinks and junctions but leaves argv[1] as typed, so
+ * a plain comparison skipped main() for a linked checkout and `--check` exited 0 having checked
+ * nothing. The same idiom as SeriousGeese/CICD agent-hooks, and one consumers' entry-guard
+ * guardrails already recognise.
+ */
+function isEntryPoint() {
   try {
-    return realpathSync(p);
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
   } catch {
-    return path.resolve(p);
+    return false;
   }
-};
+}
 
-// Compared through realpath on both sides: node resolves import.meta.url through symlinks
-// and junctions but leaves argv[1] as typed, so a plain comparison skipped main() for a
-// linked checkout and `--check` exited 0 having checked nothing.
-if (process.argv[1] && real(process.argv[1]) === real(fileURLToPath(import.meta.url))) {
+if (isEntryPoint()) {
   main().then(
     (code) => process.exit(code),
     (err) => {
