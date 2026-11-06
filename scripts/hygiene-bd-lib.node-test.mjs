@@ -7,7 +7,6 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
-  CLOSE_ASSIGNEE_REFUSAL_RE,
   DISTINCT_ACTOR_RE,
   askLabel,
   bdCli,

@@ -11,7 +11,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync, utimesSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync, execFile, spawn } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { removeTempDir } from './cleanup.mjs';
 import { copyTemplate, disposeTemplates } from './git-fixture-template.mjs';

@@ -2,7 +2,7 @@
 // A consumer's own tests cover its workflow file and its real archive, registry and inbox.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -11,7 +11,6 @@ import { tryLoadConfig } from './agent-tooling-config.mjs';
 import {
   NO_REPO_LABEL,
   SWEEP_LAPSE_DAYS,
-  TRACKING_ISSUE_TITLE,
   daysSince,
   groupByRepo,
   listInbox,
