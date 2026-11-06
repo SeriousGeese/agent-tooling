@@ -20,6 +20,15 @@
 //   - REFUSES, before writing anything, a selected path that the consumer's
 //     scripts/hooks/CICD-HOOKS-SHA records: a path has exactly one owner, and the hooks belong
 //     to SeriousGeese/CICD;
+//   - REFUSES, before writing anything, to replace an existing file agent-tooling did not
+//     write: a target must be absent, already the new bytes, or still exactly what the recorded
+//     ref wrote under the recorded prefix. A consumer file at a manifest path, or a vendored
+//     file edited in place, is listed and the whole sync stops, unless --adopt says this sync
+//     may take such files over (a consumer moving its own scripts into agent-tooling does);
+//   - checks and reads everything first, then mutates in a fixed order: each file is written
+//     through a temp file renamed over its path (never through a symlink or a hard link), then
+//     the record, then the stale deletes, so a failure never leaves a half-synced tree behind a
+//     record that claims otherwise;
 //   - writes each file at its path under <repo> with LF endings, deletes files an earlier sync
 //     vendored that the selection no longer lists (a file the manifest dropped, or, only with
 //     --drop, a de-selected set: sets are not cumulative), and records ref, prefix, sets and files in
@@ -32,7 +41,8 @@
 //
 // Dependency-free, and imports no sibling: a first adoption fetches this one file alone.
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -48,14 +58,18 @@ export const ROOTS = Object.freeze(['scripts', '.agents', 'docs', 'templates']);
 // source text it checks against.
 export const NEUTRAL_PREFIX = ['AGENT', 'TOOLING', ''].join('_');
 const NEUTRAL_PREFIX_RE = new RegExp(String.raw`\b${NEUTRAL_PREFIX}`, 'g');
+/** The most a single vendored file may weigh, from git or from the network. */
+const MAX_FILE_BYTES = 16 * 1024 * 1024;
+const FETCH_TIMEOUT_MS = 30_000;
 
 const USAGE =
-  'usage: node agent-tooling-sync.mjs --into <repo> --ref <40-hex sha> [--set <name>[,<name>]] [--drop] [--env-prefix PREFIX_] [--sha-file scripts/AGENT-TOOLING-SHA] [--cicd-sha-file scripts/hooks/CICD-HOOKS-SHA] [--from <agent-tooling checkout>]\n' +
-  '       node agent-tooling-sync.mjs --into <repo> --check [--sha-file ...] [--from <agent-tooling checkout>]\n';
+  'usage: node agent-tooling-sync.mjs --into <repo> --ref <40-hex sha> [--set <name>[,<name>]] [--drop] [--adopt] [--env-prefix PREFIX_] [--sha-file scripts/AGENT-TOOLING-SHA] [--cicd-sha-file scripts/hooks/CICD-HOOKS-SHA] [--from <agent-tooling checkout>]\n' +
+  '       node agent-tooling-sync.mjs --into <repo> --check [--sha-file ...] [--from <agent-tooling checkout>]\n' +
+  '  --adopt  this sync may replace existing files agent-tooling did not write (each is named on stderr)\n';
 
 /** @param {string[]} argv */
 export function parseArgs(argv) {
-  /** @type {{ into?: string, ref?: string, envPrefix?: string, sets?: string[], drop?: boolean, shaFile: string, cicdShaFile: string, from?: string, check: boolean }} */
+  /** @type {{ into?: string, ref?: string, envPrefix?: string, sets?: string[], drop?: boolean, adopt?: boolean, shaFile: string, cicdShaFile: string, from?: string, check: boolean }} */
   const out = { shaFile: DEFAULT_SHA_FILE, cicdShaFile: DEFAULT_CICD_SHA_FILE, check: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -73,6 +87,7 @@ export function parseArgs(argv) {
     else if (a === '--from') out.from = next();
     else if (a === '--check') out.check = true;
     else if (a === '--drop') out.drop = true;
+    else if (a === '--adopt') out.adopt = true;
     else throw new Error(`unknown argument: ${a}`);
   }
   return out;
@@ -107,7 +122,9 @@ export function isEnvPrefix(prefix) {
  * backslashes. `.agents/skills/x/SKILL.md` passes; `../x`, `/abs`, `src/x` do not.
  */
 export function isSafePath(p) {
-  const s = String(p);
+  // A string, never anything that merely stringifies to one (['scripts/x'] does).
+  if (typeof p !== 'string') return false;
+  const s = p;
   if (!s || s.includes('\\') || s.startsWith('/') || /^[A-Za-z]:/.test(s)) return false;
   const segs = s.split('/');
   if (!ROOTS.includes(segs[0]) || segs.length < 2) return false;
@@ -126,7 +143,8 @@ export function isSafePath(p) {
 /** The exact bytes a consumer should have for one vendored file. */
 export function transform(text, envPrefix) {
   const lf = text.replace(/\r\n/g, '\n');
-  return envPrefix === NEUTRAL_PREFIX ? lf : lf.replace(NEUTRAL_PREFIX_RE, envPrefix);
+  // A function replacer: a string one would read `$&`, `$'` and friends as patterns.
+  return envPrefix === NEUTRAL_PREFIX ? lf : lf.replace(NEUTRAL_PREFIX_RE, () => envPrefix);
 }
 
 /** @param {{ ref: string, envPrefix: string, sets: string[], files: string[] }} rec */
@@ -155,12 +173,16 @@ export function parseShaFile(text) {
     .filter(Boolean);
   if (!ref || !envPrefix || !setsLine) throw new Error('AGENT-TOOLING-SHA is missing its ref, env-prefix or sets line');
   if (!isPinnedRef(ref)) throw new Error(`AGENT-TOOLING-SHA records a ref that is not a full 40-hex commit SHA: ${ref}`);
+  // The recorded prefix is rewritten into files and compared against them: a hand edit must
+  // not smuggle in anything but a plain PREFIX_.
+  if (!isEnvPrefix(envPrefix)) throw new Error(`AGENT-TOOLING-SHA records an env-prefix that is not PREFIX_ (upper-case, ending in _): ${envPrefix}`);
   return { ref, envPrefix, sets: parseSetList(setsLine), files };
 }
 
 /**
  * The files the consumer's CICD-HOOKS-SHA records, as repo-relative paths. An absent file
- * means CICD owns nothing here.
+ * means CICD owns nothing here; a present one without its `files:` block is refused, since
+ * reading it as "owns nothing" would let this sync write over CICD's hooks.
  * @param {string} into
  * @param {string} cicdShaFile repo-relative
  */
@@ -168,6 +190,7 @@ export function cicdOwnedPaths(into, cicdShaFile) {
   const file = recordPath(into, cicdShaFile, '--cicd-sha-file');
   if (!existsSync(file)) return new Set();
   const text = readFileSync(file, 'utf8');
+  if (!/^files:[ \t]*\r?$/m.test(text)) throw new Error(`${cicdShaFile} exists but has no "files:" block, so what CICD owns here is unknown`);
   const block = /^files:\s*\n([\s\S]*)$/m.exec(text)?.[1] ?? '';
   const dir = path.posix.dirname(cicdShaFile.split(path.sep).join('/'));
   return new Set(
@@ -234,6 +257,58 @@ function entryExists(p) {
 }
 
 /**
+ * A write target must be a regular file or absent, and every existing ancestor up to `--into`
+ * a directory: renaming over a directory, or creating under a file, fails halfway through a
+ * sync. Run after assertRealInside(), so every ancestor already resolves inside `--into`.
+ */
+function assertWritableTarget(into, abs, rel) {
+  const root = path.resolve(into);
+  for (let dir = path.dirname(abs); dir.length > root.length && dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    if (!entryExists(dir)) continue;
+    let isDir = false;
+    try {
+      isDir = statSync(dir).isDirectory();
+    } catch {
+      isDir = false;
+    }
+    if (!isDir) throw new Error(`refusing ${rel}: ${path.relative(root, dir).split(path.sep).join('/')} exists and is not a directory`);
+  }
+  if (entryExists(abs) && !lstatSync(abs).isFile()) throw new Error(`refusing ${rel}: it exists and is not a regular file`);
+}
+
+/**
+ * Write `content` at `abs` through a temp file in the same directory renamed over it. The
+ * rename replaces the directory entry, so a symlink or a hard link at `abs` is replaced, never
+ * written through, and a reader never sees half a file. The containment check is re-run
+ * immediately before the mkdir, the temp write and the rename, so a directory swapped for a
+ * link after the up-front checks is still refused. An existing file's mode is kept (an
+ * executable script stays executable).
+ */
+function writeFileAtomic(into, abs, rel, content) {
+  assertRealInside(into, abs, rel);
+  mkdirSync(path.dirname(abs), { recursive: true });
+  const tmp = path.join(path.dirname(abs), `.${path.basename(abs)}.${process.pid}.${randomBytes(6).toString('hex')}.agent-tooling-sync.tmp`);
+  let mode;
+  try {
+    const st = lstatSync(abs);
+    if (st.isFile()) mode = st.mode & 0o777;
+  } catch {
+    mode = undefined;
+  }
+  try {
+    assertRealInside(into, tmp, rel);
+    // `wx`: never open an entry that is already there (a planted link at the temp name).
+    writeFileSync(tmp, content, { flag: 'wx' });
+    if (mode !== undefined) chmodSync(tmp, mode);
+    assertRealInside(into, abs, rel);
+    renameSync(tmp, abs);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
+/**
  * The absolute path of a record file the caller named (--sha-file, --cicd-sha-file): a safe
  * repository-relative path, inside `--into` lexically and through every link.
  */
@@ -255,16 +330,56 @@ const ownedKey = (p) => p.toLowerCase();
  */
 async function readAtRef(ref, rel, from) {
   if (from) {
-    return execFileSync('git', ['-C', from, 'show', `${ref}:${rel}`], {
+    // A pinned SHA must mean the same bytes everywhere: refs/replace in the --from checkout
+    // could otherwise substitute any object, and an fsmonitor hook would run its code.
+    return execFileSync('git', ['--no-replace-objects', '-c', 'core.fsmonitor=false', '-C', from, 'show', `${ref}:${rel}`], {
       encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, MSYS_NO_PATHCONV: '1' },
+      maxBuffer: MAX_FILE_BYTES,
+      env: { ...process.env, MSYS_NO_PATHCONV: '1', GIT_NO_REPLACE_OBJECTS: '1' },
     });
   }
   const url = `https://raw.githubusercontent.com/${REPO}/${ref}/${rel}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`GET ${url} -> HTTP ${res.status}`);
-  return res.text();
+  const tooBig = () => new Error(`GET ${url}: response is over ${MAX_FILE_BYTES} bytes`);
+  if (Number(res.headers.get('content-length')) > MAX_FILE_BYTES) {
+    await res.body?.cancel();
+    throw tooBig();
+  }
+  const chunks = [];
+  let size = 0;
+  if (res.body) {
+    for await (const chunk of res.body) {
+      size += chunk.byteLength;
+      if (size > MAX_FILE_BYTES) throw tooBig();
+      chunks.push(chunk);
+    }
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/**
+ * Refuses a path list that one filesystem could not hold as listed: two paths equal but for
+ * case (one file on Windows and macOS, so a sync would write it twice and a case-only rename
+ * would delete it), or a path that is a directory of another listed path.
+ * @param {Iterable<string>} paths
+ * @param {string} where
+ */
+function assertDistinctPaths(paths, where) {
+  /** @type {Map<string, string>} */
+  const byKey = new Map();
+  for (const p of paths) {
+    const prior = byKey.get(ownedKey(p));
+    if (prior !== undefined && prior !== p) throw new Error(`${where} lists two paths that differ only in case: ${prior}, ${p}`);
+    byKey.set(ownedKey(p), p);
+  }
+  for (const p of byKey.values()) {
+    const segs = p.split('/');
+    for (let i = 1; i < segs.length; i++) {
+      const dir = byKey.get(ownedKey(segs.slice(0, i).join('/')));
+      if (dir !== undefined) throw new Error(`${where} lists ${dir} as a file and as a directory of ${p}`);
+    }
+  }
 }
 
 /**
@@ -290,6 +405,7 @@ export function parseManifest(json, where = 'manifest.json') {
     files.forEach(check);
     sets[name] = [...files];
   }
+  assertDistinctPaths([...m.base, ...Object.values(sets).flat()], where);
   return { base: [...m.base], sets };
 }
 
@@ -301,13 +417,16 @@ export function parseManifest(json, where = 'manifest.json') {
 export function selectFiles(manifest, names) {
   const picked = new Set(manifest.base);
   for (const name of names) {
-    const lists = name === ALL_SET ? Object.values(manifest.sets) : [manifest.sets[name]];
-    if (!lists[0] && name !== ALL_SET) {
+    // Own properties only: `constructor` or `toString` is an unknown set, not a crash.
+    if (name !== ALL_SET && !Object.hasOwn(manifest.sets, name)) {
       throw new Error(`unknown set "${name}" (known: ${[...Object.keys(manifest.sets), ALL_SET].join(', ')})`);
     }
+    const lists = name === ALL_SET ? Object.values(manifest.sets) : [manifest.sets[name]];
     for (const list of lists) for (const f of list ?? []) picked.add(f);
   }
-  return [...picked].sort();
+  const files = [...picked].sort();
+  assertDistinctPaths(files, 'the selected files');
+  return files;
 }
 
 async function manifestAt(ref, from) {
@@ -315,13 +434,18 @@ async function manifestAt(ref, from) {
 }
 
 /**
- * @param {{ into: string, ref: string, envPrefix?: string, sets?: string[], drop?: boolean, shaFile?: string, cicdShaFile?: string, from?: string }} opts
+ * @param {{ into: string, ref: string, envPrefix?: string, sets?: string[], drop?: boolean, adopt?: boolean, shaFile?: string, cicdShaFile?: string, from?: string }} opts
+ *   `adopt`: this sync may replace existing files agent-tooling did not write (each one is
+ *   named on stderr). Without it such a file stops the whole sync before anything is written.
  * @returns {Promise<string[]>} the files written
  */
 export async function sync(opts) {
   if (!isPinnedRef(opts.ref)) throw new Error(`ref must be a full 40-hex commit SHA (a branch or tag can move): ${opts.ref}`);
   const shaRel = opts.shaFile ?? DEFAULT_SHA_FILE;
+  const cicdRel = opts.cicdShaFile ?? DEFAULT_CICD_SHA_FILE;
   const shaPath = recordPath(opts.into, shaRel, '--sha-file');
+  // Writing this record over CICD's would erase what CICD owns here.
+  if (ownedKey(shaRel) === ownedKey(cicdRel)) throw new Error(`--sha-file and --cicd-sha-file name the same file: ${shaRel}`);
   const previous = existsSync(shaPath) ? parseShaFile(readFileSync(shaPath, 'utf8')) : null;
   // The recorded prefix comes before the neutral one, so a consumer that once passed
   // --env-prefix and has no agent-tooling.json keeps its hatch names on a plain re-sync.
@@ -331,12 +455,20 @@ export async function sync(opts) {
   const manifest = await manifestAt(opts.ref, opts.from);
   const sets = opts.sets ?? previous?.sets ?? [];
   const files = selectFiles(manifest, sets);
+  const selected = new Set(files.map(ownedKey));
+  // A vendored file at a record's path would be overwritten by the record (or would overwrite
+  // CICD's): one path, one owner, and the records are nobody's vendored file.
+  const recordKeys = new Set([ownedKey(shaRel), ownedKey(cicdRel)]);
+  const onRecord = files.filter((f) => recordKeys.has(ownedKey(f)));
+  if (onRecord.length) {
+    throw new Error(`refusing a selection that vendors a record file (--sha-file ${shaRel}, --cicd-sha-file ${cicdRel}): ${onRecord.join(', ')}`);
+  }
   // A file the manifest still ships but the new selection leaves out may still be wired up
   // (a package.json script, a settings.json hook, a skill link). Sets are not cumulative, so
   // naming fewer is the easy mistake: refuse unless the caller says --drop.
   if (!opts.drop && previous) {
     const shipped = new Set(selectFiles(manifest, ['all']));
-    const dropped = previous.files.filter((f) => !files.includes(f) && shipped.has(f));
+    const dropped = previous.files.filter((f) => !selected.has(ownedKey(f)) && shipped.has(f));
     if (dropped.length > 0) {
       throw new Error(
         `set(s) ${sets.join(',') || 'none'} would stop vendoring ${dropped.length} file(s) the last sync (sets ${previous.sets.join(',') || 'none'}) wrote: ${dropped.join(', ')}. ` +
@@ -345,63 +477,141 @@ export async function sync(opts) {
     }
   }
 
-  const cicd = new Set([...cicdOwnedPaths(opts.into, opts.cicdShaFile ?? DEFAULT_CICD_SHA_FILE)].map(ownedKey));
+  const cicd = new Set([...cicdOwnedPaths(opts.into, cicdRel)].map(ownedKey));
   const clash = files.filter((f) => cicd.has(ownedKey(f)));
   if (clash.length) {
+    throw new Error(`refusing to write ${clash.length} path(s) that ${cicdRel} records as vendored from SeriousGeese/CICD (a path has exactly one owner): ${clash.join(', ')}`);
+  }
+
+  // Every read and every check happens before the first mutation, so a refusal or a failed
+  // fetch leaves the tree exactly as it was.
+  const contents = await Promise.all(files.map(async (f) => transform(await readAtRef(opts.ref, f, opts.from), envPrefix)));
+  const targets = files.map((f) => inside(opts.into, f));
+  targets.forEach((abs, i) => {
+    assertRealInside(opts.into, abs, files[i]);
+    assertWritableTarget(opts.into, abs, files[i]);
+  });
+  assertWritableTarget(opts.into, shaPath, shaRel);
+
+  /** @type {Promise<{ shipped: Set<string>, error?: undefined } | { error: Error }> | undefined} */
+  let before;
+  // The manifest at the recorded ref, read once and only when something needs it.
+  const shippedBefore = () =>
+    (before ??= manifestAt(/** @type {{ ref: string }} */ (previous).ref, opts.from)
+      .then((m) => ({ shipped: new Set(selectFiles(m, [ALL_SET])) }))
+      .catch((error) => ({ error })));
+  /**
+   * The bytes the recorded ref wrote at `f` under the recorded prefix, or why that is unknown.
+   * The record's file list alone is plain text a hand edit could point anywhere, so the old
+   * manifest must have shipped the path too.
+   * @returns {Promise<{ text: string } | { text?: undefined, why: string }>}
+   */
+  const wroteBefore = async (f) => {
+    const rec = /** @type {{ ref: string, envPrefix: string }} */ (previous);
+    const b = await shippedBefore();
+    if (b.error) return { why: `cannot read manifest.json at ${rec.ref} (${b.error.message})` };
+    if (!b.shipped.has(f)) return { why: `manifest.json at ${rec.ref.slice(0, 12)} did not ship it` };
+    try {
+      return { text: transform(await readAtRef(rec.ref, f, opts.from), rec.envPrefix) };
+    } catch (err) {
+      return { why: `cannot read it at ${rec.ref} (${/** @type {Error} */ (err).message})` };
+    }
+  };
+
+  // Ownership: a target that exists must be the new bytes already, or still exactly what the
+  // recorded ref wrote. Anything else is the consumer's (its own file at a path the manifest
+  // now claims, or a vendored file edited in place) and is replaced only with --adopt.
+  const recorded = new Map((previous?.files ?? []).filter(isSafePath).map((f) => [ownedKey(f), f]));
+  /** @type {{ f: string, why: string }[]} */
+  const foreign = [];
+  for (let i = 0; i < files.length; i++) {
+    if (!entryExists(targets[i])) continue;
+    const have = readFileSync(targets[i], 'utf8').replace(/\r\n/g, '\n');
+    if (have === contents[i]) continue;
+    const was = recorded.get(ownedKey(files[i]));
+    if (!previous || was === undefined) {
+      foreign.push({ f: files[i], why: `no ${shaRel} records agent-tooling writing it` });
+      continue;
+    }
+    const wrote = await wroteBefore(was);
+    if (wrote.text === undefined) foreign.push({ f: files[i], why: `${wrote.why}, so it cannot be confirmed unchanged` });
+    else if (have !== wrote.text) foreign.push({ f: files[i], why: `edited since ${REPO}@${previous.ref.slice(0, 12)} wrote it` });
+  }
+  if (foreign.length && !opts.adopt) {
     throw new Error(
-      `refusing to write ${clash.length} path(s) that ${opts.cicdShaFile ?? DEFAULT_CICD_SHA_FILE} records as vendored from SeriousGeese/CICD ` +
-        `(a path has exactly one owner): ${clash.join(', ')}`,
+      `refusing to replace ${foreign.length} existing file(s) agent-tooling did not write; nothing was written: ` +
+        `${foreign.map(({ f, why }) => `${f} (${why})`).join(', ')}. ` +
+        'If this sync should take them over (the consumer moved its own copy into agent-tooling), re-run with --adopt; ' +
+        'if a vendored file was edited in place, move the change into agent-tooling first.',
     );
   }
 
-  const contents = await Promise.all(files.map(async (f) => transform(await readAtRef(opts.ref, f, opts.from), envPrefix)));
-  const targets = files.map((f) => inside(opts.into, f));
-  targets.forEach((abs, i) => assertRealInside(opts.into, abs, files[i]));
-  // A stale file is deleted only when the manifest at the recorded ref shipped it: the
-  // record's own file list is plain text a hand edit could point at a consumer's file.
-  const stale = (previous?.files ?? []).filter((f) => !files.includes(f) && isSafePath(f) && !cicd.has(ownedKey(f)));
-  let shippedBefore = new Set();
-  if (stale.length) {
-    try {
-      shippedBefore = new Set(selectFiles(await manifestAt(previous.ref, opts.from), [ALL_SET]));
-    } catch (err) {
-      process.stderr.write(`agent-tooling-sync: not deleting ${stale.length} stale file(s): cannot read manifest.json at ${previous.ref} (${/** @type {Error} */ (err).message})\n`);
-    }
-  }
-  targets.forEach((abs, i) => {
-    mkdirSync(path.dirname(abs), { recursive: true });
-    writeFileSync(abs, contents[i]);
-  });
   // The record and the old manifest only say a path WAS vendored; the consumer may have taken
   // it over since (a hand edit, a file of its own at a name the manifest later claimed). So a
   // stale file is deleted only when its bytes are still exactly what the recorded ref wrote,
-  // under the recorded prefix. Anything else is kept, and the sync says so.
-  for (const f of stale) {
-    if (!shippedBefore.has(f)) continue;
-    const abs = inside(opts.into, f);
-    const keep = (why) => process.stderr.write(`agent-tooling-sync: not deleting stale ${f}: ${why}\n`);
+  // under the recorded prefix. Anything else is kept, and the sync says so. A path still
+  // selected under another case is the same file on a case-insensitive filesystem: not stale.
+  const stale = (previous?.files ?? []).filter(
+    (f) => isSafePath(f) && !selected.has(ownedKey(f)) && !cicd.has(ownedKey(f)) && !recordKeys.has(ownedKey(f)),
+  );
+  /** @type {string[]} */
+  const notes = [];
+  /** @type {{ f: string, abs: string, wrote: string }[]} */
+  const deletions = [];
+  if (stale.length) {
+    const b = await shippedBefore();
+    if (b.error) {
+      notes.push(`not deleting ${stale.length} stale file(s): cannot read manifest.json at ${previous?.ref} (${b.error.message})`);
+    } else {
+      for (const f of stale) {
+        if (!b.shipped.has(f)) continue;
+        const abs = inside(opts.into, f);
+        const keep = (why) => notes.push(`not deleting stale ${f}: ${why}`);
+        try {
+          assertRealInside(opts.into, abs, f);
+        } catch (err) {
+          keep(/** @type {Error} */ (err).message);
+          continue;
+        }
+        if (!entryExists(abs)) continue;
+        if (!lstatSync(abs).isFile()) {
+          keep('it is not a regular file');
+          continue;
+        }
+        const wrote = await wroteBefore(f);
+        if (wrote.text === undefined) {
+          keep(`${wrote.why}, so it cannot be confirmed unchanged`);
+          continue;
+        }
+        if (readFileSync(abs, 'utf8').replace(/\r\n/g, '\n') !== wrote.text) {
+          keep(`it differs from what ${REPO}@${previous?.ref.slice(0, 12)} wrote, so it is treated as the consumer's; delete it by hand if it is not`);
+          continue;
+        }
+        deletions.push({ f, abs, wrote: wrote.text });
+      }
+    }
+  }
+
+  // Mutate, in order: the files, then the record, then the stale deletes. A stale delete that
+  // fails keeps its file and says so; it never throws past a record that is already written.
+  const say = (line) => process.stderr.write(`agent-tooling-sync: ${line}\n`);
+  for (const { f } of foreign) say(`adopting ${f}: replacing a file agent-tooling did not write`);
+  targets.forEach((abs, i) => writeFileAtomic(opts.into, abs, files[i], contents[i]));
+  writeFileAtomic(opts.into, shaPath, shaRel, formatShaFile({ ref: opts.ref, envPrefix, sets, files }));
+  notes.forEach(say);
+  for (const { f, abs, wrote } of deletions) {
     try {
       assertRealInside(opts.into, abs, f);
+      if (!entryExists(abs)) continue;
+      if (!lstatSync(abs).isFile() || readFileSync(abs, 'utf8').replace(/\r\n/g, '\n') !== wrote) {
+        say(`not deleting stale ${f}: it changed while this sync ran`);
+        continue;
+      }
+      rmSync(abs);
     } catch (err) {
-      keep(/** @type {Error} */ (err).message);
-      continue;
+      say(`not deleting stale ${f}: ${/** @type {Error} */ (err).message}`);
     }
-    if (!existsSync(abs)) continue;
-    let wrote;
-    try {
-      wrote = transform(await readAtRef(previous.ref, f, opts.from), previous.envPrefix);
-    } catch (err) {
-      keep(`cannot read it at ${previous.ref} to confirm it is unchanged (${/** @type {Error} */ (err).message})`);
-      continue;
-    }
-    if (readFileSync(abs, 'utf8').replace(/\r\n/g, '\n') !== wrote) {
-      keep(`it differs from what ${REPO}@${previous.ref.slice(0, 12)} wrote, so it is treated as the consumer's; delete it by hand if it is not`);
-      continue;
-    }
-    rmSync(abs, { force: true });
   }
-  mkdirSync(path.dirname(shaPath), { recursive: true });
-  writeFileSync(shaPath, formatShaFile({ ref: opts.ref, envPrefix, sets, files }));
   return files;
 }
 

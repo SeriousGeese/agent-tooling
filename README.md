@@ -86,6 +86,16 @@ vendored copy, `node scripts/agent-tooling-sync.mjs ...`. Without `--set`, a re-
 recorded sets; naming a smaller selection deletes the files that dropped out. A branch or tag
 is refused as `--ref`: it can move.
 
+Sync never replaces a file it did not write. Every target must be absent, already the new
+bytes, or still exactly what the recorded ref wrote (under the recorded prefix); otherwise the
+whole sync stops before writing anything and lists each such path. That covers a consumer
+file at a path the manifest claims and a vendored file edited in place. When the consumer is
+**moving its own scripts into agent-tooling**, so that the vendored copy should replace its
+file, re-run with `--adopt` (library: `sync({ ..., adopt: true })`); each adopted path is
+printed to stderr. All checks and reads happen first; then the files are written (each
+through a temp file renamed over its path, so a symlink or hard link is replaced, never
+written through), then the record, then the stale deletes.
+
 Then:
 
 1. Write `agent-tooling.json` at the root with the consumer's values (the hatch prefix, bead
