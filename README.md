@@ -27,7 +27,10 @@ consumer at a pinned commit, at the same paths they have here, by
 ## Sets
 
 `manifest.json` lists every vendored file. `base` ships to every consumer (this sync, the
-config loader, the node:test runner, `session-lock.mjs`, the actor id and test cleanup helpers, and the two small libraries the sets share: `lib/bd-cli.mjs`, the one synchronous `bd` caller (timeout, 64 MB maxBuffer, JSON row parser, assignee-mismatch close retry), and `lib/parse-flags.mjs`, the argv splitter). Everything else is in a named set, chosen with
+config loader, the node:test runner, `session-lock.mjs`, the actor id and test cleanup helpers, and
+the two small libraries the sets share: `lib/bd-cli.mjs`, the one synchronous `bd` caller (timeout,
+64 MB maxBuffer, JSON row parser, assignee-mismatch close retry), and `lib/parse-flags.mjs`, the
+argv splitter). Everything else is in a named set, chosen with
 `--set`:
 
 | Set | Contents |

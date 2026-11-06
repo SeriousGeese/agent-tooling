@@ -177,7 +177,8 @@ hooks"; omitting the flag is how you say that. Chaining
 `git add` has already staged everything, and rtk's compressed rendering of a `;`-chained command
 prints each stage's summary inline, so the earlier `ok N files changed` sits directly above the
 later failure and reads as a landed commit. Because the message file was deleted in the same line,
-the message is gone too, caught only by checking `git log` before pushing. Sequence it instead:
+the message is gone too, caught only by checking `git log` before pushing. A worker reaching for an
+explicit spelling of "run hooks" has none to reach for; omitting the flag is the only one. Sequence it instead:
 write the message file, `git commit -F <file>` bare, confirm with `git log -1`, THEN `rm <file>` in
 a separate command.
 
@@ -278,8 +279,9 @@ a list of npm script names: `bash scripts/gate.sh lint type-check` is not a requ
 Run each script explicitly so each gets its own log and verdict, for example
 `bash scripts/gate.sh --name lint npm run lint && bash scripts/gate.sh --name type-check npm run type-check`.
 The wrapper prints this guidance when it recognizes a list of bare npm script names. Its
-`--name <slug>` accepts only `[A-Za-z0-9._-]` (deliberate: the slug becomes a log file name);
-anything else is refused, so pick a plain slug rather than a path or a phrase.
+`--name <slug>` takes 1 to 60 characters from `[A-Za-z0-9._-]`, starting with a letter or digit
+(deliberate: the slug becomes a log file name); anything else is refused with exit 2, so pick a plain
+slug rather than a path or a phrase.
 
 **Do not pipe `gate.sh` itself into a filter. That is a masked gate too, and it is refused.** The
 wrapper does not launder the pipe: `bash scripts/gate.sh npm test | tail -30` still reports
@@ -297,7 +299,8 @@ was no gate, and let the pipeline report `tail`'s status. The flag is the docume
 captured run's log, i.e. what a fan-out wave reaches for (many gates in one worktree), so the guard
 went quiet for the workflow that needs it most, in the silent direction. A wrapper's own options
 must be consumed along with its name, so **no `gate.sh` flag, present or future, changes whether the
-guard sees the gate.**
+guard sees the gate.** Nothing else moves: a bare run, a non-gate argument, `--help` and the
+`pipefail` hatch all behave exactly as before.
 
 **On a large suite the LOG FILE is the readable artefact, not the stream.** Streaming is deliberate
 (it keeps the output watchdog fed), but a big suite's output runs to a couple of hundred KB, and the
@@ -351,9 +354,9 @@ COLLECTION time with an ordinary-looking `Test suite failed to run` and a caret 
 line, which reads as a module-resolution bug in whatever file it names. Check `df -i`. The fix is
 to clear the regenerable caches (the Jest transform cache and the Node compile cache) when no peer
 test process is running. Both grow monotonically across every session on the box, so the session
-that hits the wall is not the one that filled it. A test runner can refuse to start below a floor
-of free inodes and print the diagnosis (`df -i`) plus the remedy, with an escape hatch such as
-`AGENT_TOOLING_SKIP_INODE_PREFLIGHT=1`.
+that hits the wall is not the one that filled it. The base `test-preflight.mjs` refuses to start a run
+when the temp directory has fewer than 20000 free inodes (`MIN_FREE_INODES`), printing the diagnosis
+(`df -i`) plus the remedy. The escape hatch is `AGENT_TOOLING_SKIP_INODE_PREFLIGHT=1`.
 
 ## One request per poll tick
 

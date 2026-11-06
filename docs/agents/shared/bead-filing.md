@@ -86,7 +86,8 @@ Five workers walking past one red is one bead.
 ## Speculative ideas go to the idea inbox
 
 A "could also...", "nice to have" or "we might want..." that nobody asked for is **not** a bead. It
-is one line on the open idea-inbox bead (`idea-inbox.mjs`, in the `hygiene` set; the asks use `ask.mjs` from the `asks` set when present):
+is one line on the open idea-inbox bead (`idea-inbox.mjs`, in the `hygiene` set; the asks use
+`ask.mjs` from the `asks` set when present):
 
 ```bash
 node scripts/idea-inbox.mjs add "<the idea, one sentence>" --source "<bead id or context>"

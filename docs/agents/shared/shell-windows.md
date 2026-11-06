@@ -146,8 +146,9 @@ just the specific shapes below. Each known instance cost a real diagnosis cycle:
   check here. A repository whose slash commands are named like paths (`/bead`, `/asks`) steers you
   into it: a bead about one opens with its name. Prefix with `MSYS_NO_PATHCONV=1`, or reword so the
   title does not lead with the slash, and **read the field back after any `bd create` / `bd update`
-  whose title begins with `/`**. A CLI wrapper can repair and shout about this one shape; `bd`,
-  `gh pr create --title` and every other free-text CLI do not.
+  whose title begins with `/`**. `oddity.mjs` (in the `hygiene` set) repairs this one shape in a title
+  through `repairMsysMangledTitle` and says so loudly; `bd`, `gh pr create --title` and every other
+  free-text CLI do not.
 - `sha256sum` / `md5sum` on a backslash-bearing path emit an ESCAPED output line (`\<hash>  <path>`),
   silently shifting `cut` / `awk` fields so every comparison mismatches, uniformly, which reads as a
   real finding. Prefer `cmp` for identity checks, or feed hashing tools forward-slash paths.
@@ -174,7 +175,7 @@ just the specific shapes below. Each known instance cost a real diagnosis cycle:
 
 - **An eol/CRLF fix CANNOT be verified on a Windows checkout.** Git Bash's `bash` runs CRLF scripts
   fine (Linux bash exits 2 at line 1), and suites that need real Linux behaviour skip their live
-  cases on win32, so a Windows re-verify goes green from several directions while the Linux gate is
+  cases on win32, so a Windows re-verify goes green from three directions while the Linux gate is
   red. The honest local proof is a real Linux run (a node container over an LF-normalized copy,
   `MSYS_NO_PATHCONV=1 docker run ...`). A simulation that builds a "Windows checkout" with
   `git checkout-index -c core.autocrlf=true` cannot produce CRLF for any file covered by a
@@ -202,6 +203,12 @@ just the specific shapes below. Each known instance cost a real diagnosis cycle:
   not exist yet). The `/tmp/...` form is not reproducible from every session (it can map to
   `%LOCALAPPDATA%\Temp`), so treat it as unreliable rather than diagnosable.
 - **A pid from Node's `child_process.spawn()` is a native Windows pid, invisible to a DIFFERENT MSYS
-  bash's `kill -0`.** MSYS `/proc` lists only MSYS-aware pids, and here the pid namespaces
-  themselves do not line up, so a node:test fixture that spawns a process
-  and probes it from a different bash with `kill -0` cannot see it.
+  bash's `kill -0`.** Unlike the `/proc` case, the pid namespaces themselves do not line up, so a
+  node:test fixture that hands a spawned child's pid to a bash wait loop sees the process as already
+  gone even while it is very much alive: a false "the process exited" read, not a false hang. Fix:
+  create the process FROM bash, not from Node. `nohup <cmd> >/dev/null 2>&1 & echo $!` run inside a
+  throwaway bash puts the pid in the same job-control namespace the checking bash's `kill -0` can
+  actually resolve. Keep the `nohup`: without it the backgrounded process dies the moment its
+  launching `bash -c` exits, which reads identically to the process never having started. Worked
+  example: `backgroundedPid()` in `scripts/worktree-new-await.node-test.mjs`, which documents the same
+  distinction inline.
