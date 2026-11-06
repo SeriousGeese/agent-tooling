@@ -197,7 +197,7 @@ while [ $# -gt 0 ]; do
     # The whole leading comment block from "Usage:" on, through the --await exit-code table:
     # it is the first thing a caller that just got a non-zero from the mandatory pre-gate
     # step needs. Selected by content, not by line range, so it cannot silently drift off the
-    # end as the header grows; worktree-new.node-test.mjs asserts it still prints the table.
+    # end as the header grows; worktree-new-await.node-test.mjs asserts it still prints the table.
     -h|--help) awk '/^# Usage:/{on=1} on && /^set -euo pipefail/{exit} on{sub(/^# ?/, ""); print}' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *)
