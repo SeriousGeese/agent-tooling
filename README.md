@@ -39,21 +39,23 @@ config loader, the node:test runner, the actor id and test cleanup helpers, and 
 | `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata (and the gh-rate-limit helper they import; `parse-flags` is in base). Knobs: `AGENT_TOOLING_PR_WORKFLOW`, `AGENT_TOOLING_GATE_CHECK`, `pr-metadata --migrations-dir` |
 | `session` | Session phase and tracker, hooksPath repair |
 | `skills` | Process skills under `.agents/skills/`: `bead-workflow` (with its `agents/openai.yaml`), `beads-bulk`, `beads-hygiene`, `prompt-next-work`, `bead-chains`, `mvp-readiness`, `recurring-task`, `window-review`, `dependabot-handler`. (`ask-review` ships in `asks`, with the script it drives.) `bead-chains/SKILL.md` and `prompt-next-work/SKILL.md` run `scripts/bead-chains.mjs`, so they need the `hygiene` set installed alongside. Each may read a consumer-owned `LOCAL.md`, see Skill overlays |
-| `docs` | The generic halves of the agent docs under `docs/agents/shared/`: `worktrees-and-claims.md`, `beads-sync.md` |
+| `docs` | The generic halves of the agent docs under `docs/agents/shared/`: `worktrees-and-claims.md`, `beads-sync.md`, `bead-filing.md`, `shell-guidelines.md`, `shell-windows.md` |
 | `ritual` | The agent-ritual conformance smoke |
 
 `all` is every set; `none` is `base` alone. A set may be empty until its files move here.
 
 ### The `docs` set
 
-Two long agent docs are split into a generic half here and a consumer half there. The generic half
+Five long agent docs are split into a generic half here and a consumer half there. The generic half
 (`docs/agents/shared/worktrees-and-claims.md`: claim identity, worktree isolation failure modes,
 `worktree-rm.sh` invariants, the `core.hooksPath` hijack, rebasing inside a worktree, append-versus-append
 conflicts; `docs/agents/shared/beads-sync.md`: Dolt sync failure modes, recovery recipes, bd gotchas,
-tracker mutation and PR wiring rules) is vendored in place and must pass the neutral-text contract
+tracker mutation and PR wiring rules; `docs/agents/shared/bead-filing.md`: when to open a bead, the idea inbox, owning a pipeline red;
+`docs/agents/shared/shell-guidelines.md`: rtk and grep traps, what the Bash tool does to a command, capturing a gate, jest path patterns,
+poll rate limits; `docs/agents/shared/shell-windows.md`: PowerShell, MSYS path mangling and Windows verification traps) is vendored in place and must pass the neutral-text contract
 (no consumer names, bead ids, people or hostnames). The consumer keeps its own incidents, bead ids and
 measurements in its existing `docs/agents/<name>.md`, which links to the shared half. Environment
-variables are written with the neutral `AGENT_TOOLING_` prefix, which sync rewrites.
+variables are written with the neutral `AGENT_TOOLING_` prefix, which sync rewrites. A consumer whose hooks print a fixed doc path (for example a Windows-shell pointer at `docs/agents/shell-windows.md`) keeps its own half at that path and links to `shared/shell-windows.md`.
 
 ## The worktree set
 

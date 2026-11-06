@@ -121,7 +121,10 @@
       ".agents/skills/window-review/SKILL.md"
     ],
     "docs": [
+      "docs/agents/shared/bead-filing.md",
       "docs/agents/shared/beads-sync.md",
+      "docs/agents/shared/shell-guidelines.md",
+      "docs/agents/shared/shell-windows.md",
       "docs/agents/shared/worktrees-and-claims.md"
     ],
     "ritual": []
