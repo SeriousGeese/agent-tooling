@@ -2320,6 +2320,15 @@ test('the root package.json postinstall is run after an --ignore-scripts install
   }
 });
 
+// Every spelling of an EXISTING path the script may legitimately print. On a Windows runner the
+// temp dir is spelled with an 8.3 short name (RUNNER~1) by the test and with the long name by git,
+// which is where the script takes its paths from, so both forms are accepted, never a prefix.
+function pathForms(p) {
+  return [...new Set([toBashPath(p), toBashPath(realpathSync.native(p))])];
+}
+// An absolute script path in any form bash prints: POSIX (/d/a/...), or a drive letter with either slash.
+const ABS_SCRIPT = '"(?:/|[A-Za-z]:[\\\\/])[^"]*worktree-new\\.sh"';
+
 test('worktreeRoot and worktreeNamePattern from agent-tooling.json place and name a bare slug', async () => {
   const f = fixture();
   writeFileSync(
@@ -2333,7 +2342,7 @@ test('worktreeRoot and worktreeNamePattern from agent-tooling.json place and nam
     // The printed commands come from worktreeScripts, with the PATH filled in.
     // Unconfigured, the await command names the script by absolute path so it pastes from anywhere.
     assert.ok(
-      /bash "\/[^"]*scripts\/worktree-new\.sh" --await /.test(stdout) && stdout.includes(` --await ${toBashPath(dest)}`),
+      new RegExp(`bash ${ABS_SCRIPT} --await `).test(stdout) && pathForms(dest).some((d) => stdout.includes(` --await ${d}`)),
       `expected an absolute-path await command:\n${stdout}`,
     );
 
@@ -2354,12 +2363,12 @@ test('worktreeScripts overrides change the commands printed in hints, per key', 
   );
   try {
     const { stdout } = await run(f.primary, ['hints', 'feat/hints', '--no-install']);
-    const dest = toBashPath(path.join(f.root, 'primary-hints'));
-    assert.ok(stdout.includes(`tools/wait ${dest}`), stdout);
-    assert.ok(stdout.includes(`cd ${toBashPath(f.primary)} && tools/drop ${dest}`) || stdout.includes(`tools/drop ${dest}`), stdout);
+    const destForms = pathForms(path.join(f.root, 'primary-hints'));
+    assert.ok(destForms.some((d) => stdout.includes(`tools/wait ${d}`)), stdout);
+    assert.ok(destForms.some((d) => stdout.includes(`tools/drop ${d}`)), stdout);
     // An existing destination is refused with the configured teardown command.
     await assert.rejects(run(f.primary, ['hints', 'feat/hints2', '--no-install']), (err) => {
-      assert.match(toBashPath(err.stderr), new RegExp(`remove it with: tools/drop ${dest.replace(/[.*+?^${}()|[\]]/g, '\\$&')}`));
+      assert.ok(destForms.some((d) => toBashPath(err.stderr).includes(`remove it with: tools/drop ${d}`)), err.stderr);
       return true;
     });
   } finally {
@@ -2409,7 +2418,7 @@ test('the --await Fix command names the script by absolute path', async () => {
   markInstalled(target, { binding: 'none' });
   try {
     await assert.rejects(run(f.primary, ['--await', toBashPath(target)], ENV), (err) => {
-      assert.match(err.stderr, /bash "\/[^"]*scripts\/worktree-new\.sh" --install /, err.stderr);
+      assert.match(err.stderr, new RegExp(`bash ${ABS_SCRIPT} --install `), err.stderr);
       return true;
     });
   } finally {
