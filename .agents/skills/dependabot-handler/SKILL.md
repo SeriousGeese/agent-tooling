@@ -33,8 +33,8 @@ Use a lower-cost/background agent only for bounded side reasoning, such as compa
 
 ## Known Issues (DO NOT MERGE)
 
-The bumps that must be rejected and ignored are listed in `LOCAL.md`, because each one is a fact
-about one repository's dependency graph. With no `LOCAL.md` there are none: treat every bump the
+The bumps that must be rejected and ignored belong in an overlay, because each one is a fact
+about one repository's dependency graph. With no overlay there are none: treat every bump the
 same way and let the gates decide.
 
 **Every entry in that list must name a constraint that is periodically RE-VERIFIED, not folklore.**

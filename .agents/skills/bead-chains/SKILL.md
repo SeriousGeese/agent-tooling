@@ -28,12 +28,20 @@ the slice is everything up to the first break.
 
 ```bash
 node scripts/bd-dolt-sync.mjs pull
+# if the repository has scripts/bead-chains.mjs:
 node scripts/bead-chains.mjs                      # ranked, top 10
 node scripts/bead-chains.mjs --all --limit 30     # include chains a break cuts to one bead
 node scripts/bead-chains.mjs --json               # for a script
 ```
 
-For each chain the script prints the beads that can land in **one PR**, indented by dependency
+**Without that script, do the same analysis by hand from `bd` output.** `bd list --format dot`
+prints the dependency edges (the only output that carries the edge type; read only `blocks`
+edges, never parent-child or `related`, and ignore edges to or from an epic). Take each open bead
+with no open blocker as a root, walk the beads it unblocks level by level, and cut the walk at
+the first bead that has a reason from the table below. Everything up to the cut is the PR set.
+Rank roots by how many beads land in their PR set, and keep the top three or four.
+
+For each chain the script (or your hand analysis) gives the beads that can land in **one PR**, indented by dependency
 level, and every other bead in the chain with the reason it is not in that PR:
 
 | Reason | Meaning |

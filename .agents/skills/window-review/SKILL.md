@@ -162,7 +162,7 @@ were about to file.
 
 ## 6. Also check (cheap, high-yield)
 
-- **Deploy state**: the staging deploy's version endpoint (the URL is in `LOCAL.md`) vs the
+- **Deploy state**: the staging deploy's version endpoint (a consumer's overlay may give the URL) vs the
   window's HEAD; note that anything observed on production tests against the last release tag,
   not main.
 - **Bead reconciliation**: findings the window already fixed → close the stale-open beads with

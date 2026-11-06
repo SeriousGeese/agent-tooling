@@ -160,8 +160,9 @@ Priority is the tie-breaker, not the sort key. Prefer, in order:
 3. Beads with **concrete, verifiable AC** over vague ones.
 4. Then priority, then age.
 
-**Blocker chains are first-class candidates.** Run `node scripts/bead-chains.mjs` alongside
-`bd ready`. It ranks roots whose completion unblocks a run of other beads, and prints for each
+**Blocker chains are first-class candidates.** If the repository has `scripts/bead-chains.mjs`, run it alongside
+`bd ready`; otherwise do the analysis by hand as `bead-chains` §1 describes (roots with no open
+blocker, walked level by level to the first break). It ranks roots whose completion unblocks a run of other beads, and prints for each
 one which beads can land in one PR and why the rest cannot. Judge its top chains by
 `.agents/skills/bead-chains/SKILL.md` §2: time gaps, work already on main, size, and whose
 work it is. Offer the best surviving chain as one of the candidate batches. It usually beats an

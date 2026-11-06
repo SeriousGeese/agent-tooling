@@ -384,8 +384,8 @@ the exact shape that once lost four beads' text when a concurrent
 
 ## Phase 7: Feature-toggle beadRef / cleanup-bead audit
 
-**Goal:** every toggle in the repository's feature-toggle registry (the file `LOCAL.md` names;
-skip this phase if the repository has none) has a `beadRef` that resolves to a real bead, and, per
+**Goal:** every toggle in the repository's feature-toggle registry (skip this phase if the repository has none;
+an overlay may say where it is) has a `beadRef` that resolves to a real bead, and, per
 the repository's feature-toggle policy, a paired cleanup bead ("Cleanup: remove `<name>` feature
 toggle") somewhere in the tracker, deferred until product sign-off.
 

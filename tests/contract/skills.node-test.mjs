@@ -6,7 +6,8 @@
 //  2. A consumer's own advice lives in a consumer-owned overlay, `LOCAL.md`, beside the skill.
 //     Sync never reads, writes or lists it, so a vendored skill must read correctly without one:
 //     any mention of LOCAL.md is introduced as optional ("If a `LOCAL.md` exists beside this
-//     file ..."), and no LOCAL.md is ever in the manifest or under a vendored root.
+//     file ..."), and no LOCAL.md is ever in the manifest (one on disk under a vendored root
+//     would also fail manifest.node-test.mjs, which requires every file there to be listed).
 //  3. Neutrality (no consumer names, people or hostnames) is enforced for every vendored file by
 //     manifest.node-test.mjs; the skills are covered there too.
 import test from 'node:test';
@@ -26,7 +27,7 @@ const skillFiles = all.filter((f) => SKILL_RE.test(f));
 
 /** Parse the leading `---` frontmatter into a flat key map (values are single-line strings). */
 export function frontmatterOf(source) {
-  const m = source.match(/^---\n([\s\S]*?)\n---\n/);
+  const m = source.replace(/\r\n/g, '\n').match(/^---\n([\s\S]*?)\n---\n/);
   if (!m) return null;
   const out = {};
   for (const line of m[1].split('\n')) {
@@ -37,6 +38,16 @@ export function frontmatterOf(source) {
 }
 
 const OPTIONAL_INTRO = /If a `LOCAL\.md` exists beside this file/;
+
+/** Phrasings that make LOCAL.md sound mandatory or the only home of a step the skill needs. */
+export const REQUIRED_PHRASING = [
+  /\b(?:requires?|must have|needs|cannot run without|can't run without|depends on) (?:a |an |the )?`?LOCAL\.md/i,
+  /\bwithout (?:a |an |the )?`?LOCAL\.md`?,? (?:it |this |the skill )?(?:cannot|can't|will not|won't|does not work)/i,
+  /\b(?:named|listed|described|defined|given|carried|specified|documented) (?:in|by) (?:the )?`?LOCAL\.md/i,
+  /`LOCAL\.md` (?:carries|names|lists|has the|holds the|defines|specifies|contains)/i,
+  /\b(?:is|are) (?:in|listed in|named in) `LOCAL\.md`/i,
+  /\bsee `LOCAL\.md`/i,
+];
 
 test('the skills set ships the process skills (so the checks below have something to read)', () => {
   assert.ok(manifest.sets.skills.length > 0, 'sets.skills is empty');
@@ -86,11 +97,32 @@ test('a vendored SKILL.md that mentions LOCAL.md introduces it as optional, firs
     const intro = source.search(OPTIONAL_INTRO);
     if (intro < 0) bad.push(`${file}: mentions LOCAL.md but never says it is optional`);
     else if (intro > first) bad.push(`${file}: LOCAL.md is mentioned before the optional introduction`);
-    if (/\b(?:requires?|must have|needs) (?:a |an |the )?`?LOCAL\.md/i.test(source)) {
-      bad.push(`${file}: treats LOCAL.md as required`);
+    for (const re of REQUIRED_PHRASING) {
+      const hit = source.match(re);
+      if (hit) bad.push(`${file}: treats LOCAL.md as required or the only source (${JSON.stringify(hit[0])})`);
     }
   }
   assert.deepEqual(bad, []);
+});
+
+test('the required-phrasing detector catches each phrasing it is meant to', () => {
+  for (const s of [
+    'a LOCAL.md is required: it needs a `LOCAL.md` here',
+    'cannot run without LOCAL.md',
+    'the command named in `LOCAL.md`',
+    'the table is listed in `LOCAL.md`',
+    '`LOCAL.md` carries the table',
+    '`LOCAL.md` names the helper',
+    'the URL is in `LOCAL.md`',
+    'see `LOCAL.md`',
+  ]) {
+    assert.ok(REQUIRED_PHRASING.some((re) => re.test(s)), `not caught: ${s}`);
+  }
+  assert.ok(!REQUIRED_PHRASING.some((re) => re.test('If a `LOCAL.md` exists beside this file, read it first: it holds specifics.')));
+});
+
+test('frontmatterOf reads CRLF files', () => {
+  assert.deepEqual(frontmatterOf('---\r\nname: x\r\ndescription: y\r\n---\r\n# T\r\n'), { name: 'x', description: 'y' });
 });
 
 test('no LOCAL.md is listed in the manifest (overlays are consumer-owned; sync never touches them)', () => {
