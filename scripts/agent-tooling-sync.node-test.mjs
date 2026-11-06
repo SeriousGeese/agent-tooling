@@ -188,6 +188,94 @@ test('a symlinked directory that leads outside --into is refused before anything
   }
 });
 
+/** A file symlink, or null where the host refuses one (Windows without developer mode). */
+function fileLink(target, at) {
+  try {
+    symlinkSync(target, at, 'file');
+    return at;
+  } catch (err) {
+    if (/** @type {NodeJS.ErrnoException} */ (err).code === 'EPERM') return null;
+    throw err;
+  }
+}
+
+test('a vendored target that is itself a symlinked file leading outside --into is refused, never written through', async (t) => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  const elsewhere = consumer();
+  try {
+    const victim = path.join(elsewhere, 'victim.txt');
+    writeFileSync(victim, 'untouched\n');
+    mkdirSync(path.join(dst, 'scripts'));
+    if (!fileLink(victim, path.join(dst, 'scripts', 'base.mjs'))) {
+      t.skip('this host cannot create a file symlink');
+      return;
+    }
+    await assert.rejects(sync({ into: dst, ref: src.sha, from: src.root }), /symlink in the path leads outside --into/);
+    assert.equal(readFileSync(victim, 'utf8'), 'untouched\n');
+  } finally {
+    clean(src.root, dst, elsewhere);
+  }
+});
+
+test('a dangling symlink at a vendored target is refused, so a write cannot create its target', async (t) => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  const elsewhere = consumer();
+  try {
+    const nowhere = path.join(elsewhere, 'created-by-sync.txt');
+    mkdirSync(path.join(dst, 'scripts'));
+    if (!fileLink(nowhere, path.join(dst, 'scripts', 'base.mjs'))) {
+      t.skip('this host cannot create a file symlink');
+      return;
+    }
+    await assert.rejects(sync({ into: dst, ref: src.sha, from: src.root }), /resolves nowhere/);
+    assert.deepEqual(readdirSync(elsewhere), []);
+  } finally {
+    clean(src.root, dst, elsewhere);
+  }
+});
+
+test('a stale file reached through a symlinked directory outside --into is not deleted', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  const elsewhere = consumer();
+  try {
+    await sync({ into: dst, ref: src.sha, sets: ['skills'], from: src.root });
+    // The skill dir is swapped for a link to an outside dir holding a same-named file.
+    rmSync(path.join(dst, '.agents'), { recursive: true, force: true });
+    write(elsewhere, 'skills/x/SKILL.md', 'outside\n');
+    symlinkSync(elsewhere, path.join(dst, '.agents'), 'junction');
+    await sync({ into: dst, ref: src.sha, sets: [], drop: true, from: src.root });
+    assert.equal(readFileSync(path.join(elsewhere, 'skills/x/SKILL.md'), 'utf8'), 'outside\n');
+  } finally {
+    unlinkLink(path.join(dst, '.agents'));
+    clean(src.root, dst, elsewhere);
+  }
+});
+
+test('the record files are checked like any target: safe relative paths, no symlink escape', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  const elsewhere = consumer();
+  try {
+    for (const bad of ['../outside', '/abs/SHA', 'src/SHA', 'scripts\\SHA']) {
+      await assert.rejects(sync({ into: dst, ref: src.sha, shaFile: bad, from: src.root }), /--sha-file must be/, bad);
+      await assert.rejects(sync({ into: dst, ref: src.sha, cicdShaFile: bad, from: src.root }), /--cicd-sha-file must be/, bad);
+      await assert.rejects(check({ into: dst, shaFile: bad, from: src.root }), /--sha-file must be/, bad);
+    }
+    // docs/ links outside: a record kept there is neither read nor written through the link.
+    writeFileSync(path.join(elsewhere, 'SHA'), 'outside\n');
+    symlinkSync(elsewhere, path.join(dst, 'docs'), 'junction');
+    await assert.rejects(sync({ into: dst, ref: src.sha, shaFile: 'docs/SHA', from: src.root }), /symlink in the path leads outside --into/);
+    await assert.rejects(sync({ into: dst, ref: src.sha, cicdShaFile: 'docs/SHA', from: src.root }), /symlink in the path leads outside --into/);
+    assert.equal(readFileSync(path.join(elsewhere, 'SHA'), 'utf8'), 'outside\n');
+  } finally {
+    unlinkLink(path.join(dst, 'docs'));
+    clean(src.root, dst, elsewhere);
+  }
+});
+
 test('the CLI runs when reached through a symlinked or junctioned directory', () => {
   const dst = consumer();
   const link = path.join(consumer(), 'linked');

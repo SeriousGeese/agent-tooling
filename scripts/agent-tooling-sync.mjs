@@ -32,7 +32,7 @@
 //
 // Dependency-free, and imports no sibling: a first adoption fetches this one file alone.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -165,7 +165,7 @@ export function parseShaFile(text) {
  * @param {string} cicdShaFile repo-relative
  */
 export function cicdOwnedPaths(into, cicdShaFile) {
-  const file = path.join(path.resolve(into), cicdShaFile);
+  const file = recordPath(into, cicdShaFile, '--cicd-sha-file');
   if (!existsSync(file)) return new Set();
   const text = readFileSync(file, 'utf8');
   const block = /^files:\s*\n([\s\S]*)$/m.exec(text)?.[1] ?? '';
@@ -203,15 +203,45 @@ function inside(into, rel) {
 
 /**
  * `inside()` is lexical. A symlinked directory in the consumer's tree (`scripts -> /elsewhere`)
- * would still carry a write out of `--into`, so before writing, the nearest existing ancestor
- * of the target must resolve, through every link, to somewhere inside the real `--into`.
+ * would still carry a read, write or delete out of `--into`, and so would the target itself
+ * when it is a symlinked file (writeFileSync follows it). So before any of those, the target
+ * when it exists (as an entry: a dangling link counts), or else its nearest existing ancestor,
+ * must resolve through every link to somewhere inside the real `--into`. A link that resolves
+ * nowhere is refused too: writing through it would create its target, wherever that is.
  */
 function assertRealInside(into, abs, rel) {
   const root = realpathSync(path.resolve(into));
-  let probe = path.dirname(abs);
-  while (!existsSync(probe)) probe = path.dirname(probe);
-  const r = path.relative(root, realpathSync(probe));
+  let probe = abs;
+  while (!entryExists(probe)) probe = path.dirname(probe);
+  let real;
+  try {
+    real = realpathSync(probe);
+  } catch {
+    throw new Error(`refusing ${rel}: a symlink in the path resolves nowhere`);
+  }
+  const r = path.relative(root, real);
   if (r.startsWith('..') || path.isAbsolute(r)) throw new Error(`refusing ${rel}: a symlink in the path leads outside --into`);
+}
+
+/** True when `p` exists as a directory entry, including a symlink whose target is missing. */
+function entryExists(p) {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The absolute path of a record file the caller named (--sha-file, --cicd-sha-file): a safe
+ * repository-relative path, inside `--into` lexically and through every link.
+ */
+function recordPath(into, rel, flag) {
+  if (!isSafePath(rel)) throw new Error(`${flag} must be a repository-relative path under ${ROOTS.join(', ')}: ${rel}`);
+  const abs = inside(into, rel);
+  assertRealInside(into, abs, rel);
+  return abs;
 }
 
 /** Lower-cased, so a case-insensitive filesystem cannot give one path two owners. */
@@ -291,7 +321,7 @@ async function manifestAt(ref, from) {
 export async function sync(opts) {
   if (!isPinnedRef(opts.ref)) throw new Error(`ref must be a full 40-hex commit SHA (a branch or tag can move): ${opts.ref}`);
   const shaRel = opts.shaFile ?? DEFAULT_SHA_FILE;
-  const shaPath = inside(opts.into, shaRel);
+  const shaPath = recordPath(opts.into, shaRel, '--sha-file');
   const previous = existsSync(shaPath) ? parseShaFile(readFileSync(shaPath, 'utf8')) : null;
   // The recorded prefix comes before the neutral one, so a consumer that once passed
   // --env-prefix and has no agent-tooling.json keeps its hatch names on a plain re-sync.
@@ -343,7 +373,15 @@ export async function sync(opts) {
     writeFileSync(abs, contents[i]);
   });
   for (const f of stale) {
-    if (shippedBefore.has(f)) rmSync(inside(opts.into, f), { force: true });
+    if (!shippedBefore.has(f)) continue;
+    const abs = inside(opts.into, f);
+    try {
+      assertRealInside(opts.into, abs, f);
+    } catch (err) {
+      process.stderr.write(`agent-tooling-sync: not deleting stale ${f}: ${/** @type {Error} */ (err).message}\n`);
+      continue;
+    }
+    rmSync(abs, { force: true });
   }
   mkdirSync(path.dirname(shaPath), { recursive: true });
   writeFileSync(shaPath, formatShaFile({ ref: opts.ref, envPrefix, sets, files }));
@@ -356,7 +394,7 @@ export async function sync(opts) {
  */
 export async function check(opts) {
   const shaRel = opts.shaFile ?? DEFAULT_SHA_FILE;
-  const shaPath = inside(opts.into, shaRel);
+  const shaPath = recordPath(opts.into, shaRel, '--sha-file');
   if (!existsSync(shaPath)) return [`${shaRel} is missing: nothing records what was vendored`];
   const rec = parseShaFile(readFileSync(shaPath, 'utf8'));
   const manifest = await manifestAt(rec.ref, opts.from);
@@ -375,6 +413,12 @@ export async function check(opts) {
   }
   for (const f of wanted) {
     const local = inside(opts.into, f);
+    try {
+      assertRealInside(opts.into, local, f);
+    } catch (err) {
+      problems.push(`${f}: ${/** @type {Error} */ (err).message}`);
+      continue;
+    }
     if (!existsSync(local)) {
       problems.push(`${f}: missing`);
       continue;
