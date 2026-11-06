@@ -36,6 +36,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveActorId } from './agent-actor-id.mjs';
 import {
   NO_REASON,
+  defaultPeopleLoadError,
   askLabel,
   askMetaKeys,
   formatDetail,
@@ -44,14 +45,11 @@ import {
   personKeys,
   resolvePerson,
 } from './ask-lib.mjs';
+import { bd as runBd, parseBdJsonRows } from './lib/bd-cli.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SYNC_HELPER = path.join(HERE, 'bd-dolt-sync.mjs');
 
-/** bd invocations serialize on the embedded Dolt lock, so a slow call is normal contention. */
-const BD_TIMEOUT_MS = 120_000;
-/** Node's 1 MB default overflows as a bare `spawnSync bd ENOBUFS` on a big tracker. */
-const BD_MAX_BUFFER = 64 * 1024 * 1024;
 /**
  * Caps only the bare `bd dolt` fallback. The beads set's sync helper bounds its own attempts,
  * and killing it mid-push would leave its `bd dolt push` holding the Dolt lock while this
@@ -89,36 +87,6 @@ Examples
 }
 
 // ── the bd and git edges (injectable, so the flows are testable with no bd binary) ─────────
-
-/** Run `bd <args>` and return stdout; a failure throws an Error naming the command and bd's stderr. */
-function runBd(args) {
-  try {
-    return execFileSync('bd', args, {
-      encoding: 'utf8',
-      timeout: BD_TIMEOUT_MS,
-      maxBuffer: BD_MAX_BUFFER,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch (error) {
-    const detail = String(error?.stderr || error?.message || error).trim();
-    throw new Error(`bd ${args.join(' ')}\n  ${detail}`);
-  }
-}
-
-/** bd --json shapes vary by subcommand: bare array, {issues:[...]}, or a single object. */
-export function parseBdJsonRows(raw) {
-  const text = String(raw ?? '').trim();
-  if (!text) return [];
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return [];
-  }
-  if (Array.isArray(parsed)) return parsed;
-  if (Array.isArray(parsed?.issues)) return parsed.issues;
-  return parsed && typeof parsed === 'object' ? [parsed] : [];
-}
 
 function runSync(kind) {
   const haveHelper = existsSync(SYNC_HELPER);
@@ -378,6 +346,15 @@ export function parseArgs(argv) {
  */
 export function main(argv, deps = defaultDeps()) {
   const { command, flags, positional } = parseArgs(argv);
+
+  // An agent-tooling.json that exists but failed to load is an error, never an empty routing
+  // table: falling through would answer "unknown person" for a name that IS configured.
+  // (`deps.people` supplied means the caller owns the table; --help needs none.)
+  const peopleError = deps.peopleError !== undefined ? deps.peopleError : deps.people ? null : defaultPeopleLoadError();
+  if (peopleError && command !== 'help') {
+    deps.error(`ask: cannot load agent-tooling.json: ${String(peopleError).replace(/\s+/g, ' ').trim()}`);
+    return 1;
+  }
 
   switch (command) {
     case 'help':

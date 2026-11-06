@@ -27,16 +27,16 @@ consumer at a pinned commit, at the same paths they have here, by
 ## Sets
 
 `manifest.json` lists every vendored file. `base` ships to every consumer (this sync, the
-config loader, the node:test runner and the actor id and test cleanup helpers the sets share). Everything else is in a named set, chosen with
+config loader, the node:test runner, the actor id and test cleanup helpers, and the two small libraries the sets share: `lib/bd-cli.mjs`, the one synchronous `bd` caller (timeout, 64 MB maxBuffer, JSON row parser, assignee-mismatch close retry), and `lib/parse-flags.mjs`, the argv splitter). Everything else is in a named set, chosen with
 `--set`:
 
 | Set | Contents |
 |---|---|
-| `asks` | Routing a bead to a person for a decision: ask.mjs, the inbox banner |
+| `asks` | Routing a bead to a person for a decision: ask.mjs, the inbox banner. A malformed `agent-tooling.json` is reported (ask.mjs errors and exits non-zero, the banner prints one `[asks]` line and exits 0) instead of reading as an empty routing table; a missing one stays silent |
 | `beads` | The Dolt-backed beads sync toolkit: verified pull/push (bd-dolt-sync), bd repo-churn guard, sync-remote drift check, resilient-pull shell lib |
-| `hygiene` | Epic hygiene, idea inbox, tooling-friction log |
+| `hygiene` | Epic hygiene, idea inbox, tooling-friction log, blocker-chain finder (`bead-chains.mjs`; knob `AGENT_TOOLING_REPO_LABEL` or `--repo-label`) |
 | `worktree` | claim.sh and its fresh-claim guard (claim-age), worktree creation with `--await`, the per-worktree dev server and port. See [The worktree set](#the-worktree-set) |
-| `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata (and the parse-flags and gh-rate-limit helpers they import). Knobs: `AGENT_TOOLING_PR_WORKFLOW`, `AGENT_TOOLING_GATE_CHECK`, `pr-metadata --migrations-dir` |
+| `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata (and the gh-rate-limit helper they import; `parse-flags` is in base). Knobs: `AGENT_TOOLING_PR_WORKFLOW`, `AGENT_TOOLING_GATE_CHECK`, `pr-metadata --migrations-dir` |
 | `session` | Session phase and tracker, hooksPath repair |
 | `skills` | Process skills under `.agents/skills/`: `bead-workflow` (with its `agents/openai.yaml`), `beads-bulk`, `beads-hygiene`, `prompt-next-work`, `bead-chains`, `mvp-readiness`, `recurring-task`, `window-review`, `dependabot-handler`. (`ask-review` ships in `asks`, with the script it drives.) Each may read a consumer-owned `LOCAL.md`, see Skill overlays |
 | `docs` | The generic halves of the agent docs under `docs/agents/shared/` |
@@ -86,7 +86,7 @@ never-synced `scripts/worktree-new.hint.sh` (or the file named by `WORKTREE_NEW_
 
 ### The `hygiene` set
 
-Epic hygiene (`epic-hygiene.mjs`), the idea inbox (`idea-inbox.mjs`), the feature-idea recorder
+Epic hygiene (`epic-hygiene.mjs`), the blocker-chain finder (`bead-chains.mjs`), the idea inbox (`idea-inbox.mjs`), the feature-idea recorder
 (`record-feature-idea.sh`) and the tooling-friction log (`oddity.mjs`, `oddity-lib.mjs`,
 `oddity-digest.mjs` and the two test stubs). The set is closed over `base`: its small bd, actor and
 dolt-sync plumbing lives in `hygiene-bd-lib.mjs`, which uses the `asks` and `beads` sets' scripts
