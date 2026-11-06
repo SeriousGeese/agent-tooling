@@ -15,8 +15,29 @@
     "scripts/test-support/summary-reporter.mjs"
   ],
   "sets": {
-    "asks": [],
-    "beads": [],
+    "asks": [
+      ".agents/skills/ask-review/SKILL.md",
+      "scripts/agent-actor-id.mjs",
+      "scripts/agent-actor-id.node-test.mjs",
+      "scripts/ask-lib.mjs",
+      "scripts/ask-lib.node-test.mjs",
+      "scripts/ask-sync.node-test.mjs",
+      "scripts/ask.mjs",
+      "scripts/hooks/ask-inbox.mjs",
+      "scripts/hooks/ask-inbox.node-test.mjs",
+      "templates/asks-inbox.yml"
+    ],
+    "beads": [
+      "scripts/bd-dolt-sync.mjs",
+      "scripts/bd-dolt-sync.node-test.mjs",
+      "scripts/bd-repo-guard.mjs",
+      "scripts/bd-repo-guard.node-test.mjs",
+      "scripts/check-beads-remote.mjs",
+      "scripts/check-beads-remote.node-test.mjs",
+      "scripts/dolt-resilient-pull.node-test.mjs",
+      "scripts/lib/dolt-resilient-pull.sh",
+      "scripts/test-support/cleanup.mjs"
+    ],
     "hygiene": [
       "scripts/epic-hygiene-lib.mjs",
       "scripts/epic-hygiene.mjs",
@@ -36,7 +57,20 @@
       "scripts/test-support/oddity-gh-stub.mjs"
     ],
     "worktree": [],
-    "gate": [],
+    "gate": [
+      "scripts/fetch-main.mjs",
+      "scripts/fetch-main.node-test.mjs",
+      "scripts/gate.node-test.mjs",
+      "scripts/gate.sh",
+      "scripts/gh-rate-limit.node-test.mjs",
+      "scripts/lib/gh-rate-limit.mjs",
+      "scripts/lib/parse-flags.mjs",
+      "scripts/parse-flags.node-test.mjs",
+      "scripts/pr-metadata.mjs",
+      "scripts/pr-metadata.node-test.mjs",
+      "scripts/pr-queue-state.mjs",
+      "scripts/pr-queue-state.node-test.mjs"
+    ],
     "session": [],
     "skills": [],
     "docs": [],
