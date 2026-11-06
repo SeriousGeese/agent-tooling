@@ -13,8 +13,8 @@ wired up by the repository's setup script. Sync does **not** use the GitHub remo
 Scripts named here ship in the `beads` set: `bd-dolt-sync.mjs` (verified pull, push, status),
 `bd-repo-guard.mjs` (a guard against bd churning repository files), `check-beads-remote.mjs`
 (sync-remote drift check) and `lib/dolt-resilient-pull.sh` (a retrying pull for scripts).
-`claim.sh` and `gate.sh` come from the `worktree` and `gate` sets. Environment variables carry the
-consumer's prefix, written here as `AGENT_TOOLING_`.
+`claim.sh` ships in the `worktree` set and `gate.sh` in the `gate` set. Hatch variables carry the
+repository's env prefix (`envPrefix` in `agent-tooling.json`).
 
 ## Contents
 
@@ -398,7 +398,7 @@ CLI before raising an alarm. Typical decoys:
   `export.auto: false`. Its timestamp is not a sync date.
 - `.beads/embeddeddolt.local-diverged.*`: old quarantine directories.
 
-See the upstream sync concepts doc, `docs/SYNC_CONCEPTS.md` in the beads repository.
+See the upstream sync concepts doc: <https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md>.
 
 ## bd behaviours worth knowing (1.3.x)
 
