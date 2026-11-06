@@ -54,7 +54,7 @@ test('every key has a default, and the defaults are neutral', () => {
   assert.deepEqual(DEFAULTS.people, []);
   assert.equal(DEFAULTS.claimHelper, 'scripts/claim.sh');
   assert.deepEqual(DEFAULTS.emDashPaths, []);
-  assert.deepEqual(Object.keys(DEFAULTS.worktreeScripts).sort(), ['await', 'install', 'new', 'rm']);
+  assert.deepEqual(Object.keys(DEFAULTS.worktreeScripts).sort(), ['await', 'install', 'new', 'rm', 'stale']);
   assert.deepEqual(DEFAULTS.staleHookFiles, ['.claude/settings.json', 'scripts/hooks']);
 });
 
@@ -82,7 +82,7 @@ test('every key is read when set', () => {
     people: ['alice', 'bob'],
     claimHelper: 'tools/claim.sh',
     emDashPaths: ['content/', 'docs/guide/'],
-    worktreeScripts: { new: 'bash tools/wt.sh <slug> <branch>', await: 'bash tools/wt.sh --await <path>', install: 'bash tools/wt.sh --install <path>', rm: 'bash tools/rm.sh <path>' },
+    worktreeScripts: { new: 'bash tools/wt.sh <slug> <branch>', await: 'bash tools/wt.sh --await <path>', install: 'bash tools/wt.sh --install <path>', rm: 'bash tools/rm.sh <path>', stale: 'bash tools/rm.sh --stale' },
     staleHookFiles: ['.claude/settings.json', 'tools/hooks', 'tools/claim.sh'],
   };
   const root = repo(full);
@@ -121,7 +121,7 @@ test('each key rejects a value of the wrong shape', () => {
     worktreeNamePattern: ['no-slug', ''],
     gateWrappers: ['gate.sh', ['scripts/gate.sh'], [1]],
     people: ['zed', ['Alice'], [3]],
-    claimHelper: ['../claim.sh', '/abs/claim.sh', 'C:/x.sh', 'scripts\\claim.sh'],
+    claimHelper: [null, '../claim.sh', '/abs/claim.sh', 'C:/x.sh', 'scripts\\claim.sh'],
     emDashPaths: ['content/', ['../up']],
     worktreeScripts: [null, [], { new: '' }],
     staleHookFiles: [['/abs'], 'x'],
@@ -133,7 +133,6 @@ test('each key rejects a value of the wrong shape', () => {
   }
   assert.throws(() => resolveConfig([]), /JSON object/);
   assert.equal(resolveConfig({ beadPrefix: null }).beadPrefix, null);
-  assert.equal(resolveConfig({ claimHelper: null }).claimHelper, null);
 });
 
 test('invalid JSON throws from loadConfig and falls back in tryLoadConfig', () => {

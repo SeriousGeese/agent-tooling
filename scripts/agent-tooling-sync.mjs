@@ -14,13 +14,15 @@
 //     comma-separated; `all` is every set; default: the sets recorded by the last sync, else
 //     none), then reads every one of them;
 //   - rewrites the neutral `AGENT_TOOLING_` prefix to the consumer's prefix (--env-prefix,
-//     else `envPrefix` from the consumer's agent-tooling.json, else unchanged), so a consumer
+//     else `envPrefix` from the consumer's agent-tooling.json, else the prefix the last sync
+//     recorded, else unchanged), so a consumer
 //     keeps the hatch names its docs teach (`ACME_ALLOW_CLAIM_STEAL`);
 //   - REFUSES, before writing anything, a selected path that the consumer's
 //     scripts/hooks/CICD-HOOKS-SHA records: a path has exactly one owner, and the hooks belong
 //     to SeriousGeese/CICD;
 //   - writes each file at its path under <repo> with LF endings, deletes files an earlier sync
-//     vendored that the selection no longer lists, and records ref, prefix, sets and files in
+//     vendored that the selection no longer lists (a file the manifest dropped, or, only with
+//     --drop, a de-selected set: sets are not cumulative), and records ref, prefix, sets and files in
 //     scripts/AGENT-TOOLING-SHA (--sha-file to move it);
 //   - `--check` re-derives every recorded file from the recorded ref, prefix and sets and
 //     exits 1 naming each one that was edited, deleted or is missing.
@@ -48,12 +50,12 @@ export const NEUTRAL_PREFIX = ['AGENT', 'TOOLING', ''].join('_');
 const NEUTRAL_PREFIX_RE = new RegExp(String.raw`\b${NEUTRAL_PREFIX}`, 'g');
 
 const USAGE =
-  'usage: node agent-tooling-sync.mjs --into <repo> --ref <40-hex sha> [--set <name>[,<name>]] [--env-prefix PREFIX_] [--sha-file scripts/AGENT-TOOLING-SHA] [--cicd-sha-file scripts/hooks/CICD-HOOKS-SHA] [--from <agent-tooling checkout>]\n' +
+  'usage: node agent-tooling-sync.mjs --into <repo> --ref <40-hex sha> [--set <name>[,<name>]] [--drop] [--env-prefix PREFIX_] [--sha-file scripts/AGENT-TOOLING-SHA] [--cicd-sha-file scripts/hooks/CICD-HOOKS-SHA] [--from <agent-tooling checkout>]\n' +
   '       node agent-tooling-sync.mjs --into <repo> --check [--sha-file ...] [--from <agent-tooling checkout>]\n';
 
 /** @param {string[]} argv */
 export function parseArgs(argv) {
-  /** @type {{ into?: string, ref?: string, envPrefix?: string, sets?: string[], shaFile: string, cicdShaFile: string, from?: string, check: boolean }} */
+  /** @type {{ into?: string, ref?: string, envPrefix?: string, sets?: string[], drop?: boolean, shaFile: string, cicdShaFile: string, from?: string, check: boolean }} */
   const out = { shaFile: DEFAULT_SHA_FILE, cicdShaFile: DEFAULT_CICD_SHA_FILE, check: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -70,6 +72,7 @@ export function parseArgs(argv) {
     else if (a === '--cicd-sha-file') out.cicdShaFile = next();
     else if (a === '--from') out.from = next();
     else if (a === '--check') out.check = true;
+    else if (a === '--drop') out.drop = true;
     else throw new Error(`unknown argument: ${a}`);
   }
   return out;
@@ -252,19 +255,34 @@ async function manifestAt(ref, from) {
 }
 
 /**
- * @param {{ into: string, ref: string, envPrefix?: string, sets?: string[], shaFile?: string, cicdShaFile?: string, from?: string }} opts
+ * @param {{ into: string, ref: string, envPrefix?: string, sets?: string[], drop?: boolean, shaFile?: string, cicdShaFile?: string, from?: string }} opts
  * @returns {Promise<string[]>} the files written
  */
 export async function sync(opts) {
   const shaRel = opts.shaFile ?? DEFAULT_SHA_FILE;
   const shaPath = inside(opts.into, shaRel);
   const previous = existsSync(shaPath) ? parseShaFile(readFileSync(shaPath, 'utf8')) : null;
-  const envPrefix = opts.envPrefix ?? configEnvPrefix(opts.into) ?? NEUTRAL_PREFIX;
+  // The recorded prefix comes before the neutral one, so a consumer that once passed
+  // --env-prefix and has no agent-tooling.json keeps its hatch names on a plain re-sync.
+  const envPrefix = opts.envPrefix ?? configEnvPrefix(opts.into) ?? previous?.envPrefix ?? NEUTRAL_PREFIX;
   if (!isEnvPrefix(envPrefix)) throw new Error(`env prefix must look like PREFIX_ (upper-case, ending in _): ${envPrefix}`);
 
   const manifest = await manifestAt(opts.ref, opts.from);
   const sets = opts.sets ?? previous?.sets ?? [];
   const files = selectFiles(manifest, sets);
+  // A file the manifest still ships but the new selection leaves out may still be wired up
+  // (a package.json script, a settings.json hook, a skill link). Sets are not cumulative, so
+  // naming fewer is the easy mistake: refuse unless the caller says --drop.
+  if (!opts.drop && previous) {
+    const shipped = new Set(selectFiles(manifest, ['all']));
+    const dropped = previous.files.filter((f) => !files.includes(f) && shipped.has(f));
+    if (dropped.length > 0) {
+      throw new Error(
+        `set(s) ${sets.join(',') || 'none'} would stop vendoring ${dropped.length} file(s) the last sync (sets ${previous.sets.join(',') || 'none'}) wrote: ${dropped.join(', ')}. ` +
+          'Remove what still uses them, then re-run with --drop, or name every set you still want.',
+      );
+    }
+  }
 
   const cicd = cicdOwnedPaths(opts.into, opts.cicdShaFile ?? DEFAULT_CICD_SHA_FILE);
   const clash = files.filter((f) => cicd.has(f));

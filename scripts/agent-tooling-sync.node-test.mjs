@@ -180,7 +180,10 @@ test('re-sync keeps the recorded sets; a dropped set or a de-listed file is dele
     const again = await sync({ into: dst, ref: src.sha, from: src.root });
     assert.ok(again.includes('scripts/claim.sh'), 'recorded sets are sticky');
 
-    await sync({ into: dst, ref: src.sha, sets: ['asks'], from: src.root });
+    // Narrowing the selection is refused, before writing, without --drop.
+    await assert.rejects(sync({ into: dst, ref: src.sha, sets: ['asks'], from: src.root }), /would stop vendoring .*scripts\/claim\.sh.*--drop/);
+    assert.equal(existsSync(path.join(dst, 'scripts/claim.sh')), true, 'nothing deleted by the refused sync');
+    await sync({ into: dst, ref: src.sha, sets: ['asks'], drop: true, from: src.root });
     assert.equal(existsSync(path.join(dst, 'scripts/claim.sh')), false);
 
     const sha2 = commit(src.root, { ...MANIFEST, sets: { ...MANIFEST.sets, asks: ['scripts/ask.mjs'] } }, {});
@@ -234,6 +237,10 @@ test('the env prefix defaults from agent-tooling.json; --env-prefix wins', async
     assert.match(readFileSync(path.join(dst, 'scripts/ask.mjs'), 'utf8'), /ACME_ALLOW_X/);
     writeFileSync(path.join(dst, CONFIG_FILE), JSON.stringify({ envPrefix: 'bad' }));
     await assert.rejects(sync({ into: dst, ref: src.sha, from: src.root }), /PREFIX_/);
+    // With no config and no flag, the recorded prefix is kept, never reset to neutral.
+    rmSync(path.join(dst, CONFIG_FILE));
+    await sync({ into: dst, ref: src.sha, from: src.root });
+    assert.match(readFileSync(path.join(dst, 'scripts/ask.mjs'), 'utf8'), /ACME_ALLOW_X/);
   } finally {
     clean(src.root, dst);
   }

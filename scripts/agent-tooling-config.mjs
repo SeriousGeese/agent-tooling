@@ -33,7 +33,7 @@ export const CONFIG_FILE = 'agent-tooling.json';
 const NEUTRAL_PREFIX = ['AGENT', 'HOOKS', ''].join('_');
 
 const PACKAGE_MANAGERS = ['npm', 'pnpm', 'yarn', 'bun'];
-const WORKTREE_SCRIPT_KEYS = ['new', 'await', 'install', 'rm'];
+const WORKTREE_SCRIPT_KEYS = ['new', 'await', 'install', 'rm', 'stale'];
 
 /**
  * The neutral defaults. The script paths are where SeriousGeese/agent-tooling installs its
@@ -54,6 +54,7 @@ export const DEFAULTS = Object.freeze({
     await: 'bash scripts/worktree-new.sh --await <path>',
     install: 'bash scripts/worktree-new.sh --install <path>',
     rm: 'bash scripts/worktree-rm.sh <path>',
+    stale: 'bash scripts/worktree-rm.sh --stale',
   }),
   staleHookFiles: Object.freeze(['.claude/settings.json', 'scripts/hooks']),
 });
@@ -86,7 +87,7 @@ const VALIDATORS = {
   worktreeNamePattern: (v) => (isString(v) && v.includes('<slug>') ? '' : 'must be a string containing <slug>'),
   gateWrappers: (v) => (isStringArray(v) && v.every((n) => !/[\\/]/.test(n)) ? '' : 'must be an array of script basenames (no directories)'),
   people: (v) => (isStringArray(v) && v.every((p) => /^[a-z][a-z0-9-]*$/.test(p)) ? '' : 'must be an array of lower-case handles'),
-  claimHelper: (v) => (v === null || isRelPath(v) ? '' : 'must be null or a repo-relative path'),
+  claimHelper: (v) => (isRelPath(v) ? '' : 'must be a repo-relative path'),
   emDashPaths: (v) => (Array.isArray(v) && v.every(isRelPath) ? '' : 'must be an array of repo-relative path prefixes'),
   worktreeScripts: (v) => {
     if (!v || typeof v !== 'object' || Array.isArray(v)) return `must be an object with keys ${WORKTREE_SCRIPT_KEYS.join(', ')}`;
