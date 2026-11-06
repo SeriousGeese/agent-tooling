@@ -439,11 +439,15 @@ function isEntryPoint() {
 }
 
 if (isEntryPoint()) {
+  // process.exitCode, never process.exit(code): a hard exit can drop the tail of a report
+  // still queued on a piped stdout while the status stays 0.
   main().then(
-    (code) => process.exit(code),
+    (code) => {
+      process.exitCode = code;
+    },
     (err) => {
       process.stderr.write(`agent-tooling-sync: ${err?.message ?? err}\n`);
-      process.exit(2);
+      process.exitCode = 2;
     },
   );
 }

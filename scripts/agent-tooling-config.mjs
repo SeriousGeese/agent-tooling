@@ -78,6 +78,55 @@ function isRelPath(v) {
   return !v.split('/').includes('..');
 }
 
+const HANDLE = /^[a-z][a-z0-9-]*$/;
+const PERSON_KEYS = ['handle', 'display', 'actorBases', 'emails'];
+
+/**
+ * A person is a lower-case handle (`"alice"`), or an object naming the handle plus how to
+ * recognise that person: a display name, the bd actor bases their sessions run under (a git
+ * user name such as `alice-smith`), and their email addresses.
+ */
+function personProblem(p) {
+  if (typeof p === 'string') return HANDLE.test(p) ? '' : `"${p}" is not a lower-case handle`;
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return 'each entry must be a handle string or a person object';
+  const unknown = Object.keys(p).filter((k) => !PERSON_KEYS.includes(k));
+  if (unknown.length) return `a person has unknown key(s) ${unknown.join(', ')} (known: ${PERSON_KEYS.join(', ')})`;
+  if (typeof p.handle !== 'string' || !HANDLE.test(p.handle)) return 'a person object needs a lower-case "handle"';
+  if (p.display !== undefined && !isString(p.display)) return `${p.handle}: "display" must be a non-empty string`;
+  if (p.actorBases !== undefined && !(isStringArray(p.actorBases) && p.actorBases.every((b) => /^[a-z0-9][a-z0-9._-]*$/.test(b)))) {
+    return `${p.handle}: "actorBases" must be an array of lower-case actor names`;
+  }
+  if (p.emails !== undefined && !(isStringArray(p.emails) && p.emails.every((e) => /^[^@\s]+@[^@\s]+$/.test(e)))) {
+    return `${p.handle}: "emails" must be an array of email addresses`;
+  }
+  return '';
+}
+
+/**
+ * The configured people in one shape, whichever form the config used:
+ * `[{ handle, display, actorBases, emails }]`, with a missing display the capitalised handle
+ * and missing lists empty.
+ * @param {{ people: ReadonlyArray<string | { handle: string, display?: string, actorBases?: string[], emails?: string[] }> }} cfg
+ */
+export function peopleOf(cfg) {
+  return (cfg?.people ?? []).map((p) => {
+    const o = typeof p === 'string' ? { handle: p } : p;
+    return {
+      handle: o.handle,
+      display: o.display ?? o.handle.charAt(0).toUpperCase() + o.handle.slice(1),
+      actorBases: [...(o.actorBases ?? [])],
+      emails: [...(o.emails ?? [])],
+    };
+  });
+}
+
+/** Deep-frozen copy of a validated value, so a config object cannot be mutated through it. */
+function deepFreeze(v) {
+  if (Array.isArray(v)) return Object.freeze(v.map(deepFreeze));
+  if (v && typeof v === 'object') return Object.freeze(Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deepFreeze(x)])));
+  return v;
+}
+
 /** One validator per key: returns an error string, or '' when the value is fine. */
 const VALIDATORS = {
   envPrefix: (v) => (typeof v === 'string' && /^[A-Z][A-Z0-9_]*_$/.test(v) ? '' : 'must look like PREFIX_ (upper-case, ending in _)'),
@@ -86,7 +135,14 @@ const VALIDATORS = {
   worktreeRoot: (v) => (isString(v) ? '' : 'must be a non-empty path string'),
   worktreeNamePattern: (v) => (isString(v) && v.includes('<slug>') ? '' : 'must be a string containing <slug>'),
   gateWrappers: (v) => (isStringArray(v) && v.every((n) => !/[\\/]/.test(n)) ? '' : 'must be an array of script basenames (no directories)'),
-  people: (v) => (isStringArray(v) && v.every((p) => /^[a-z][a-z0-9-]*$/.test(p)) ? '' : 'must be an array of lower-case handles'),
+  people: (v) => {
+    if (!Array.isArray(v)) return 'must be an array of handles or person objects';
+    const bad = v.map(personProblem).filter(Boolean);
+    if (bad.length) return bad.join('; ');
+    const handles = v.map((p) => (typeof p === 'string' ? p : p.handle));
+    const dupes = handles.filter((h, i) => handles.indexOf(h) !== i);
+    return dupes.length ? `lists a handle twice: ${[...new Set(dupes)].join(', ')}` : '';
+  },
   claimHelper: (v) => (isRelPath(v) ? '' : 'must be a repo-relative path'),
   emDashPaths: (v) => (Array.isArray(v) && v.every(isRelPath) ? '' : 'must be an array of repo-relative path prefixes'),
   worktreeScripts: (v) => {
@@ -127,7 +183,7 @@ export function resolveConfig(raw, source = CONFIG_FILE) {
   const out = {};
   for (const key of KNOWN_KEYS) {
     if (key === 'worktreeScripts') out[key] = Object.freeze({ ...DEFAULTS.worktreeScripts, ...(raw.worktreeScripts ?? {}) });
-    else if (Object.hasOwn(raw, key)) out[key] = Array.isArray(raw[key]) ? Object.freeze([...raw[key]]) : raw[key];
+    else if (Object.hasOwn(raw, key)) out[key] = Array.isArray(raw[key]) ? deepFreeze(raw[key]) : raw[key];
     else out[key] = DEFAULTS[key];
   }
   return Object.freeze(out);

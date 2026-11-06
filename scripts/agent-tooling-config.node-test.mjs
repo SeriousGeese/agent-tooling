@@ -15,6 +15,7 @@ import {
   fillTemplate,
   findRoot,
   loadConfig,
+  peopleOf,
   resolveConfig,
   tryLoadConfig,
   worktreeName,
@@ -120,7 +121,18 @@ test('each key rejects a value of the wrong shape', () => {
     worktreeRoot: ['', 3],
     worktreeNamePattern: ['no-slug', ''],
     gateWrappers: ['gate.sh', ['scripts/gate.sh'], [1]],
-    people: ['zed', ['Alice'], [3]],
+    people: [
+      'zed',
+      ['Alice'],
+      [3],
+      ['alice', 'alice'],
+      [{ display: 'No handle' }],
+      [{ handle: 'alice', nick: 'x' }],
+      [{ handle: 'alice', actorBases: ['Alice Smith'] }],
+      [{ handle: 'alice', emails: ['not-an-email'] }],
+      [{ handle: 'alice', display: '' }],
+      ['alice', { handle: 'alice' }],
+    ],
     claimHelper: [null, '../claim.sh', '/abs/claim.sh', 'C:/x.sh', 'scripts\\claim.sh'],
     emDashPaths: ['content/', ['../up']],
     worktreeScripts: [null, [], { new: '' }],
@@ -133,6 +145,25 @@ test('each key rejects a value of the wrong shape', () => {
   }
   assert.throws(() => resolveConfig([]), /JSON object/);
   assert.equal(resolveConfig({ beadPrefix: null }).beadPrefix, null);
+});
+
+test('people takes handles or person objects, and peopleOf gives one shape for both', () => {
+  const cfg = resolveConfig({
+    people: ['bob', { handle: 'alice', display: 'Alice S.', actorBases: ['alice-smith', 'asmith-bot'], emails: ['alice@example.com'] }],
+  });
+  assert.deepEqual(peopleOf(cfg), [
+    { handle: 'bob', display: 'Bob', actorBases: [], emails: [] },
+    { handle: 'alice', display: 'Alice S.', actorBases: ['alice-smith', 'asmith-bot'], emails: ['alice@example.com'] },
+  ]);
+  assert.deepEqual(peopleOf(resolveConfig({})), []);
+  // Deep-frozen: a hook cannot edit the shared config through a person object.
+  assert.throws(() => {
+    cfg.people[1].actorBases.push('mallory');
+  }, TypeError);
+  // peopleOf hands back copies, so a caller may edit what it got.
+  const copy = peopleOf(cfg);
+  copy[1].actorBases.push('x');
+  assert.deepEqual(cfg.people[1].actorBases, ['alice-smith', 'asmith-bot']);
 });
 
 test('invalid JSON throws from loadConfig and falls back in tryLoadConfig', () => {
