@@ -27,7 +27,10 @@ consumer at a pinned commit, at the same paths they have here, by
 ## Sets
 
 `manifest.json` lists every vendored file. `base` ships to every consumer (this sync, the
-config loader, the node:test runner, `session-lock.mjs`, the actor id and test cleanup helpers, and the two small libraries the sets share: `lib/bd-cli.mjs`, the one synchronous `bd` caller (timeout, 64 MB maxBuffer, JSON row parser, assignee-mismatch close retry), and `lib/parse-flags.mjs`, the argv splitter). Everything else is in a named set, chosen with
+config loader, the node:test runner, `session-lock.mjs`, the actor id and test cleanup helpers, and
+the two small libraries the sets share: `lib/bd-cli.mjs`, the one synchronous `bd` caller (timeout,
+64 MB maxBuffer, JSON row parser, assignee-mismatch close retry), and `lib/parse-flags.mjs`, the
+argv splitter). Everything else is in a named set, chosen with
 `--set`:
 
 | Set | Contents |
@@ -39,7 +42,7 @@ config loader, the node:test runner, `session-lock.mjs`, the actor id and test c
 | `gate` | gate.sh capture, fetch-main, PR queue state, PR metadata (and the gh-rate-limit helper they import; `parse-flags` is in base). Knobs: `AGENT_TOOLING_PR_WORKFLOW`, `AGENT_TOOLING_GATE_CHECK`, `pr-metadata --migrations-dir` |
 | `session` | The session phase hook, the session tracker (a per-session step timeline, optionally a Prometheus textfile), and `core.hooksPath` repair. See [The session set](#the-session-set) |
 | `skills` | Process skills under `.agents/skills/`: `bead-workflow` (with its `agents/openai.yaml`), `beads-bulk`, `beads-hygiene`, `prompt-next-work`, `bead-chains`, `mvp-readiness`, `recurring-task`, `window-review`, `dependabot-handler`. (`ask-review` ships in `asks`, with the script it drives.) `bead-chains/SKILL.md` and `prompt-next-work/SKILL.md` run `scripts/bead-chains.mjs`, so they need the `hygiene` set installed alongside. Each may read a consumer-owned `LOCAL.md`, see Skill overlays |
-| `docs` | The generic halves of the agent docs under `docs/agents/shared/` |
+| `docs` | The generic halves of the agent docs under `docs/agents/shared/`: `worktrees-and-claims.md`, `beads-sync.md`, `bead-filing.md`, `shell-guidelines.md`, `shell-windows.md` |
 | `ritual` | The agent-ritual conformance smoke |
 
 `all` is every set; `none` is `base` alone. A set may be empty until its files move here.
@@ -66,6 +69,19 @@ neutral token `AGENT_TOOLING_SESSION_PHASES` is rewritten on sync, as `session-l
 with none set, only a session that reached a bead step (claim, commit, push, PR, ...) is drawn with the step list. The
 step matchers name the vendored scripts (`claim.sh`, `gate.sh`, `land.sh`, `worktree-rm.sh`, ...) and common gate commands.
 Knob: `AGENT_TOOLING_HOOKS_PATH` (repair-hookspath's wanted `core.hooksPath`, default `.beads/hooks`).
+
+## The `docs` set
+
+Five long agent docs are split into a generic half here and a consumer half there. The generic half
+(`docs/agents/shared/worktrees-and-claims.md`: claim identity, worktree isolation failure modes,
+`worktree-rm.sh` invariants, the `core.hooksPath` hijack, rebasing inside a worktree, append-versus-append
+conflicts; `docs/agents/shared/beads-sync.md`: Dolt sync failure modes, recovery recipes, bd gotchas,
+tracker mutation and PR wiring rules; `docs/agents/shared/bead-filing.md`: when to open a bead, the idea inbox, owning a pipeline red;
+`docs/agents/shared/shell-guidelines.md`: rtk and grep traps, what the Bash tool does to a command, capturing a gate, jest path patterns,
+poll rate limits; `docs/agents/shared/shell-windows.md`: PowerShell, MSYS path mangling and Windows verification traps) is vendored in place and must pass the neutral-text contract
+(no consumer names, bead ids, people or hostnames). The consumer keeps its own incidents, bead ids and
+measurements in its existing `docs/agents/<name>.md`, which links to the shared half. Environment
+variables are written with the neutral `AGENT_TOOLING_` prefix, which sync rewrites. A consumer whose hooks print a fixed doc path (for example a Windows-shell pointer at `docs/agents/shell-windows.md`) keeps its own half at that path and links to `shared/shell-windows.md`.
 
 ## The worktree set
 
