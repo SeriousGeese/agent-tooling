@@ -1,6 +1,8 @@
 {
   "$comment": "Every file agent-tooling-sync.mjs can vendor into a consumer, at its consumer path (which is its path here). 'base' ships to every consumer; 'sets' are chosen with --set <name>[,<name>] ('all' is every set, 'none' is base only). A vendored .mjs imports only node: builtins and other vendored files in base or its own set (tests/contract/manifest.node-test.mjs). Consumer-owned overlay files (a skill's LOCAL.md, a hint) are never listed.",
   "base": [
+    "scripts/agent-actor-id.mjs",
+    "scripts/agent-actor-id.node-test.mjs",
     "scripts/agent-tooling-config.mjs",
     "scripts/agent-tooling-config.node-test.mjs",
     "scripts/agent-tooling-sync.mjs",
@@ -10,6 +12,7 @@
     "scripts/test-preflight.mjs",
     "scripts/test-preflight.node-test.mjs",
     "scripts/test-support/async-failure-diagnostics.mjs",
+    "scripts/test-support/cleanup.mjs",
     "scripts/test-support/exit-reconcile.mjs",
     "scripts/test-support/file-deadline.mjs",
     "scripts/test-support/summary-reporter.mjs"
@@ -17,8 +20,6 @@
   "sets": {
     "asks": [
       ".agents/skills/ask-review/SKILL.md",
-      "scripts/agent-actor-id.mjs",
-      "scripts/agent-actor-id.node-test.mjs",
       "scripts/ask-lib.mjs",
       "scripts/ask-lib.node-test.mjs",
       "scripts/ask-sync.node-test.mjs",
@@ -35,11 +36,29 @@
       "scripts/check-beads-remote.mjs",
       "scripts/check-beads-remote.node-test.mjs",
       "scripts/dolt-resilient-pull.node-test.mjs",
-      "scripts/lib/dolt-resilient-pull.sh",
-      "scripts/test-support/cleanup.mjs"
+      "scripts/lib/dolt-resilient-pull.sh"
     ],
     "hygiene": [],
-    "worktree": [],
+    "worktree": [
+      "scripts/claim-age.mjs",
+      "scripts/claim-age.node-test.mjs",
+      "scripts/claim-worktree-first.node-test.mjs",
+      "scripts/claim.sh",
+      "scripts/lib/agent-config.sh",
+      "scripts/lib/git-no-fsmonitor.sh",
+      "scripts/lib/to-node-path-probe.mjs",
+      "scripts/lib/to-node-path.sh",
+      "scripts/lib/windows-powershell-env.mjs",
+      "scripts/test-support/git-fixture-template.mjs",
+      "scripts/to-node-path.node-test.mjs",
+      "scripts/windows-powershell-env.node-test.mjs",
+      "scripts/worktree-dev.node-test.mjs",
+      "scripts/worktree-dev.sh",
+      "scripts/worktree-new.node-test.mjs",
+      "scripts/worktree-new.sh",
+      "scripts/worktree-port.node-test.mjs",
+      "scripts/worktree-port.sh"
+    ],
     "gate": [
       "scripts/fetch-main.mjs",
       "scripts/fetch-main.node-test.mjs",
