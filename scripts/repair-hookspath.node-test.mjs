@@ -561,7 +561,9 @@ test('main() wraps the repair call, not just the inspect call', () => {
   // this one pins that the REPAIR stage is inside a try/catch too, which is the regression that
   // actually reintroduces the setup-abort. Known limitation: it reads source text, so it catches
   // the wrapper being deleted, not every way the fail-open could be defeated.
-  const src = readFileSync(path.join(HERE, 'repair-hookspath.mjs'), 'utf8');
+  // CRLF-normalised: a Windows checkout with autocrlf has no '\n\n', and the slice below would
+  // collapse to the last character.
+  const src = readFileSync(path.join(HERE, 'repair-hookspath.mjs'), 'utf8').replace(/\r\n/g, '\n');
   const main = src.slice(src.indexOf('function main('));
   const call = main.indexOf('repairHooksPath({');
   assert.ok(call !== -1, 'main() should still call repairHooksPath');
