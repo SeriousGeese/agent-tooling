@@ -1,0 +1,111 @@
+# Asks inbox: print a person's pending-ask beads into the run log.
+#
+# THIS IS A TEMPLATE. A consumer copies it to .github/workflows/asks-inbox.yml and adapts the
+# marked spots (search for REPLACE). agent-tooling's sync ships it at templates/asks-inbox.yml
+# and never installs it under .github/ for you, so your copy is yours to edit.
+#
+# Why it exists: a remote agent session (a hosted coding session) often runs behind an egress
+# policy that blocks the beads remote, so it can neither pull the issue database nor reach the
+# remote's API. A self-hosted runner that already holds bd, the Dolt workspace and the remote's
+# credentials can print the inbox into the job log for such a session to read. Read-only by
+# design: it never mutates a bead and never pushes. Dispatch it from the Actions tab (or the
+# GitHub mobile app); the session reads the log.
+#
+# What to adapt
+#   - runs-on: the label of a runner that has bd, dolt and the remote credentials.
+#   - BEADS_REPO below: the absolute path of the checkout on that runner that holds .beads.
+#   - the people: they are read from agent-tooling.json ("people"), the same list ask.mjs uses,
+#     so there is nothing to edit here when you add a person.
+#
+# Deliberately NOT in a writer concurrency group: this read-only listing need not occupy a
+# bounded queue of bead writers. The only shared state it touches is a best-effort pull of the
+# runner's local clone, and a failed pull just means a slightly stale listing.
+
+name: Asks inbox
+
+on:
+  workflow_dispatch:
+    inputs:
+      person:
+        description: "Whose asks inbox to print (a handle from agent-tooling.json people)"
+        type: string
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: asks-inbox
+  cancel-in-progress: true
+
+jobs:
+  list:
+    name: List pending asks
+    # REPLACE: your runner labels. Any runner with bd, dolt and the remote credentials works.
+    runs-on: [self-hosted, REPLACE_RUNNER_LABEL]
+    timeout-minutes: 10
+    env:
+      PERSON: ${{ inputs.person }}
+      # REPLACE: where the beads workspace is checked out on the runner. A runner may override
+      # BEADS_REPO in its own environment.
+      BEADS_REPO_DEFAULT: /REPLACE/path/to/your/checkout
+    steps:
+      - name: Print asks inbox JSON
+        shell: bash
+        run: |
+          set -euo pipefail
+          export BEADS_REPO="${BEADS_REPO:-$BEADS_REPO_DEFAULT}"
+          export PATH="$HOME/.local/bin:$PATH"
+          export BEADS_DIR="$BEADS_REPO/.beads"
+          # bd and bd-dolt-sync.mjs both resolve the beads workspace by walking up from cwd;
+          # the runner's default cwd is its work dir, where there is no .beads.
+          cd "$BEADS_REPO"
+
+          # The handle must be one of the configured people, so a typo or a crafted input can
+          # never reach a bd label argument. With no people configured, nothing is accepted.
+          PERSON="${PERSON:-}"
+          node -e '
+            const fs = require("node:fs");
+            const person = process.argv[1];
+            let people = [];
+            try { people = JSON.parse(fs.readFileSync("agent-tooling.json", "utf8")).people ?? []; } catch {}
+            if (!/^[a-z][a-z0-9-]*$/.test(person) || !people.includes(person)) {
+              console.error("unknown person: " + person + " (known: " + (people.join(", ") || "none configured") + ")");
+              process.exit(1);
+            }
+          ' "$PERSON"
+
+          # Freshness is best-effort. A hiccup on the remote must not fail a read-only listing.
+          # Prefer the verified sync helper when the beads set is installed; otherwise a bare pull.
+          if [ -f scripts/bd-dolt-sync.mjs ]; then
+            node scripts/bd-dolt-sync.mjs pull || echo "WARN: pull failed; listing from the runner's local clone"
+          else
+            bd dolt pull || echo "WARN: pull failed; listing from the runner's local clone"
+          fi
+
+          # One call returns id/title/description/status/priority/labels/defer_until AND
+          # metadata (see scripts/ask-lib.mjs, "bd facts"). Closed rows are dropped reader-side,
+          # which is what makes the inbox mean ANY non-closed state, deferred beads included, on
+          # purpose.
+          bd list --label "ask-$PERSON" --all --json -n 0 > "$RUNNER_TEMP/asks.json"
+
+          echo "===ASKS_LIST_BEGIN==="
+          cat "$RUNNER_TEMP/asks.json"
+          echo "===ASKS_LIST_END==="
+
+          node -e '
+            const fs = require("node:fs");
+            const rows = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const open = (Array.isArray(rows) ? rows : []).filter(
+              (r) => String(r.status || "").toLowerCase() !== "closed"
+            );
+            fs.writeFileSync(process.argv[2], open.map((r) => r.id).join("\n"));
+          ' "$RUNNER_TEMP/asks.json" "$RUNNER_TEMP/ids.txt"
+
+          # Full detail per open ask (notes carry the ask audit lines and any prior decisions).
+          # Non-fatal per bead: one bad id must not hide the rest of the inbox.
+          while IFS= read -r id; do
+            [ -n "$id" ] || continue
+            echo "===BEAD_SHOW_BEGIN $id==="
+            bd show "$id" --json || echo "WARN: bd show failed for $id"
+            echo "===BEAD_SHOW_END $id==="
+          done < "$RUNNER_TEMP/ids.txt"
