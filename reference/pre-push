@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Reference git pre-push wiring for the CICD agent-hooks `push` set. Copy the lines you need
+# into the hook your core.hooksPath points at. Never read stdin in a new check here: a chained
+# hook (git lfs pre-push) consumes it.
+set -u
+top="$(git rev-parse --show-toplevel)"
+
+# Refuse a push while a rebase is in progress (exit code passed through).
+node "$top/scripts/hooks/block-rebase-in-progress-push.mjs" || exit $?
+
+# Keep the SSH transport alive through a long local verify (never blocks).
+node "$top/scripts/hooks/ensure-ssh-keepalive.mjs" || true
+
+# Optional: run the consumer's local verify under a per-user lock, stdin closed.
+#   node "$top/scripts/hooks/serialize-verify.mjs" "<lock dir>" -- <verify command> || exit $?
+
+# Warnings only: a push that recreates a merged branch, or drops files the merge-base had.
+node "$top/scripts/hooks/warn-dropped-files.mjs" || true
+node "$top/scripts/hooks/warn-recreated-branch.mjs" || true

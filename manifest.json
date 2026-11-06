@@ -1,0 +1,28 @@
+{
+  "$comment": "Every file agent-tooling-sync.mjs can vendor into a consumer, at its consumer path (which is its path here). 'base' ships to every consumer; 'sets' are chosen with --set <name>[,<name>] ('all' is every set, 'none' is base only). A vendored .mjs imports only node: builtins and other vendored files in base or its own set (tests/contract/manifest.node-test.mjs). Consumer-owned overlay files (a skill's LOCAL.md, a hint) are never listed.",
+  "base": [
+    "scripts/agent-tooling-config.mjs",
+    "scripts/agent-tooling-config.node-test.mjs",
+    "scripts/agent-tooling-sync.mjs",
+    "scripts/agent-tooling-sync.node-test.mjs",
+    "scripts/run-node-tests.mjs",
+    "scripts/run-node-tests.node-test.mjs",
+    "scripts/test-preflight.mjs",
+    "scripts/test-preflight.node-test.mjs",
+    "scripts/test-support/async-failure-diagnostics.mjs",
+    "scripts/test-support/exit-reconcile.mjs",
+    "scripts/test-support/file-deadline.mjs",
+    "scripts/test-support/summary-reporter.mjs"
+  ],
+  "sets": {
+    "asks": [],
+    "beads": [],
+    "hygiene": [],
+    "worktree": [],
+    "gate": [],
+    "session": [],
+    "skills": [],
+    "docs": [],
+    "ritual": []
+  }
+}

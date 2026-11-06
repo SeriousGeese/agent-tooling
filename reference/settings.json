@@ -1,0 +1,94 @@
+{
+  "$comment": "Reference Claude Code hook wiring for a repository that vendors both homes: SeriousGeese/CICD agent-hooks (scripts/hooks/, CICD-HOOKS-SHA) and SeriousGeese/agent-tooling (scripts/, AGENT-TOOLING-SHA). Copy the parts for the sets you vendored into .claude/settings.json. Every command resolves the session's own checkout, so a linked worktree runs its own copies. Consumer values (the hatch prefix, script paths, worktree naming) come from agent-tooling.json, not from here. The three worktree SessionStart hooks run in ONE command on purpose: SessionStart hooks run concurrently, and two index-mutating hooks in parallel can leave files deleted. Git pre-push wiring is in reference/pre-push. block-masked-gates reads its gate-wrapper list from the <PREFIX>GATE_WRAPPERS env var (set it under \"env\", e.g. \"gate.sh, run-node-tests.mjs\"); keep agent-tooling.json gateWrappers the same.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/verify-worktree-isolation.sh\""
+          },
+          {
+            "type": "command",
+            "timeout": 240,
+            "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/check-stale-hooks.mjs\" 2>/dev/null; node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/normalize-worktree-eol.mjs\" 2>/dev/null; node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/ensure-worktree-deps.mjs\" 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/worktree-stale-banner.mjs\" 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/ask-inbox.mjs\" 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/windows-shell-pointer.mjs\" 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-lock.mjs\" touch"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-lock.mjs\" touch"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-worktree-branch-switch.mjs\"" },
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-bare-claim.mjs\"" },
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-pr-body-heredoc.mjs\"" }
+        ]
+      },
+      {
+        "matcher": "Bash|Monitor",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-bash-double-backslash.mjs\"" },
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-prose-backtick-substitution.mjs\"" }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-masked-gates.mjs\"" },
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-uncommitted-restore.mjs\"" },
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-npx-unlisted.mjs\"" }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell|Monitor",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-break-glass.mjs\"" },
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-orphaned-worktree-cwd.mjs\"" },
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/session-lock.mjs\" touch" },
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-pattern-kill.mjs\"" }
+        ]
+      },
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-break-glass.mjs\"" }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/block-primary-checkout-edits.mjs\"" }
+        ]
+      }
+    ]
+  }
+}
