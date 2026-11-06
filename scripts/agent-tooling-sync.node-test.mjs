@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -366,6 +366,32 @@ test('re-sync keeps the recorded sets; a dropped set or a de-listed file is dele
   }
 });
 
+test('a stale file the consumer has changed or replaced is kept, even though the recorded ref shipped it', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    await sync({ into: dst, ref: src.sha, sets: ['asks', 'worktree'], from: src.root });
+    // claim.sh is now the consumer's own (edited); the inbox hook is byte-for-byte vendored.
+    write(dst, 'scripts/claim.sh', 'claim, the consumer version\n');
+    await sync({ into: dst, ref: src.sha, sets: [], drop: true, from: src.root });
+    assert.equal(readFileSync(path.join(dst, 'scripts/claim.sh'), 'utf8'), 'claim, the consumer version\n', 'an edited file is kept');
+    assert.equal(existsSync(path.join(dst, 'scripts/hooks/ask-inbox.mjs')), false, 'an untouched vendored file is still deleted');
+    // The prefix rewrite is part of what sync wrote: a file under the recorded prefix counts as unchanged.
+    const src2 = fakeSource(MANIFEST, FILES);
+    const dst2 = consumer();
+    try {
+      await sync({ into: dst2, ref: src2.sha, sets: ['asks'], envPrefix: 'ACME_', from: src2.root });
+      assert.match(readFileSync(path.join(dst2, 'scripts/ask.mjs'), 'utf8'), /ACME_ALLOW_X/);
+      await sync({ into: dst2, ref: src2.sha, sets: [], drop: true, from: src2.root });
+      assert.equal(existsSync(path.join(dst2, 'scripts/ask.mjs')), false);
+    } finally {
+      clean(src2.root, dst2);
+    }
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
 test('a path recorded in CICD-HOOKS-SHA is refused before anything is written', async () => {
   const src = fakeSource(MANIFEST, FILES);
   const dst = consumer();
@@ -446,4 +472,254 @@ test('the CLI refuses a movable ref and a malformed prefix, and --check exits 1 
   } finally {
     clean(dst);
   }
+});
+
+/** Runs `fn` with process.stderr.write captured; returns what it wrote. */
+async function captureStderr(fn) {
+  const original = process.stderr.write;
+  let out = '';
+  process.stderr.write = (chunk) => {
+    out += String(chunk);
+    return true;
+  };
+  try {
+    await fn();
+  } finally {
+    process.stderr.write = original;
+  }
+  return out;
+}
+
+test('a first sync onto a different consumer file is refused with nothing written; adopt takes it over and says so', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    write(dst, 'scripts/claim.sh', 'the consumer claim.sh\n');
+    await assert.rejects(
+      sync({ into: dst, ref: src.sha, sets: ['worktree'], from: src.root }),
+      /refusing to replace 1 existing file\(s\) agent-tooling did not write.*scripts\/claim\.sh.*--adopt/,
+    );
+    assert.equal(readFileSync(path.join(dst, 'scripts/claim.sh'), 'utf8'), 'the consumer claim.sh\n');
+    assert.equal(existsSync(path.join(dst, 'scripts/base.mjs')), false, 'not even the files that were free');
+    assert.equal(existsSync(path.join(dst, DEFAULT_SHA_FILE)), false);
+
+    const err = await captureStderr(() => sync({ into: dst, ref: src.sha, sets: ['worktree'], adopt: true, from: src.root }));
+    assert.match(err, /adopting scripts\/claim\.sh: replacing a file agent-tooling did not write/);
+    assert.equal(readFileSync(path.join(dst, 'scripts/claim.sh'), 'utf8'), 'claim\n');
+    assert.deepEqual(await check({ into: dst, from: src.root }), []);
+    // The CLI spells it --adopt.
+    assert.equal(parseArgs(['--into', '.', '--adopt']).adopt, true);
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
+test('a new set adding a path the consumer already has is refused', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    await sync({ into: dst, ref: src.sha, sets: ['asks'], from: src.root });
+    write(dst, 'scripts/claim.sh', 'mine\n');
+    await assert.rejects(sync({ into: dst, ref: src.sha, sets: ['asks', 'worktree'], from: src.root }), /did not write.*scripts\/claim\.sh/);
+    assert.equal(readFileSync(path.join(dst, 'scripts/claim.sh'), 'utf8'), 'mine\n');
+    assert.deepEqual(parseShaFile(readFileSync(path.join(dst, DEFAULT_SHA_FILE), 'utf8')).sets, ['asks'], 'the record is untouched');
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
+test('a vendored file edited in place blocks a re-sync unless adopt is passed', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    await sync({ into: dst, ref: src.sha, sets: ['asks'], from: src.root });
+    write(dst, 'scripts/ask.mjs', 'edited in place\n');
+    const sha2 = commit(src.root, null, { 'scripts/ask.mjs': 'ask v2\n' });
+    await assert.rejects(sync({ into: dst, ref: sha2, from: src.root }), /scripts\/ask\.mjs \(edited since/);
+    assert.equal(readFileSync(path.join(dst, 'scripts/ask.mjs'), 'utf8'), 'edited in place\n');
+    assert.equal(parseShaFile(readFileSync(path.join(dst, DEFAULT_SHA_FILE), 'utf8')).ref, src.sha);
+    // With adopt, the in-place edit is replaced by the new ref's bytes.
+    await captureStderr(() => sync({ into: dst, ref: sha2, adopt: true, from: src.root }));
+    assert.equal(readFileSync(path.join(dst, 'scripts/ask.mjs'), 'utf8'), 'ask v2\n');
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
+test('a prefix change and a ref bump in one re-sync is allowed and writes the new content under the new prefix', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    await sync({ into: dst, ref: src.sha, sets: ['asks'], envPrefix: 'ACME_', from: src.root });
+    const sha2 = commit(src.root, null, { 'scripts/ask.mjs': `// v2: set ${P}ALLOW_Y=1\n` });
+    await sync({ into: dst, ref: sha2, envPrefix: 'OTHER_', from: src.root });
+    assert.equal(readFileSync(path.join(dst, 'scripts/ask.mjs'), 'utf8'), '// v2: set OTHER_ALLOW_Y=1\n');
+    assert.equal(parseShaFile(readFileSync(path.join(dst, DEFAULT_SHA_FILE), 'utf8')).envPrefix, 'OTHER_');
+    assert.deepEqual(await check({ into: dst, from: src.root }), []);
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
+test('an unreadable recorded ref: a differing target needs adopt and a stale file is kept, each naming the cause', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  const gone = 'd'.repeat(40);
+  try {
+    await sync({ into: dst, ref: src.sha, sets: ['asks', 'worktree'], from: src.root });
+    const shaPath = path.join(dst, DEFAULT_SHA_FILE);
+    writeFileSync(shaPath, readFileSync(shaPath, 'utf8').replace(`ref: ${src.sha}`, `ref: ${gone}`));
+    write(dst, 'scripts/ask.mjs', 'edited\n');
+    await assert.rejects(
+      sync({ into: dst, ref: src.sha, sets: ['asks'], drop: true, from: src.root }),
+      new RegExp(`scripts/ask\\.mjs \\(cannot read manifest\\.json at ${gone}.*cannot be confirmed unchanged`),
+    );
+    assert.equal(readFileSync(path.join(dst, 'scripts/ask.mjs'), 'utf8'), 'edited\n');
+
+    const err = await captureStderr(() => sync({ into: dst, ref: src.sha, sets: ['asks'], drop: true, adopt: true, from: src.root }));
+    assert.match(err, /adopting scripts\/ask\.mjs/);
+    assert.match(err, new RegExp(`not deleting 1 stale file\\(s\\): cannot read manifest\\.json at ${gone}`));
+    assert.equal(readFileSync(path.join(dst, 'scripts/claim.sh'), 'utf8'), 'claim\n', 'the stale file is kept');
+    const rec = parseShaFile(readFileSync(shaPath, 'utf8'));
+    assert.equal(rec.files.includes('scripts/claim.sh'), false, 'and is no longer recorded: delete it by hand');
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
+test('a target that is a directory, or under a file, is refused before anything is written', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    mkdirSync(path.join(dst, 'scripts', 'claim.sh'), { recursive: true });
+    await assert.rejects(sync({ into: dst, ref: src.sha, sets: ['worktree'], from: src.root }), /scripts\/claim\.sh: it exists and is not a regular file/);
+    assert.equal(existsSync(path.join(dst, 'scripts/base.mjs')), false);
+    assert.equal(existsSync(path.join(dst, DEFAULT_SHA_FILE)), false);
+    // A file where a directory of a target belongs.
+    rmSync(path.join(dst, 'scripts'), { recursive: true });
+    write(dst, 'scripts/hooks', 'a file, not a directory\n');
+    await assert.rejects(sync({ into: dst, ref: src.sha, sets: ['asks'], from: src.root }), /scripts\/hooks exists and is not a directory/);
+    assert.equal(existsSync(path.join(dst, 'scripts/ask.mjs')), false);
+    assert.equal(existsSync(path.join(dst, 'scripts/base.mjs')), false);
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
+test('a case-only rename in the manifest keeps the file on a case-insensitive filesystem', async (t) => {
+  const dst = consumer();
+  writeFileSync(path.join(dst, 'probe'), '');
+  const insensitive = existsSync(path.join(dst, 'PROBE'));
+  rmSync(path.join(dst, 'probe'));
+  if (!insensitive) {
+    clean(dst);
+    t.skip('this filesystem is case-sensitive, so a case-only rename is two files');
+    return;
+  }
+  const src = fakeSource({ base: ['scripts/Tool.mjs'], sets: {} }, { 'scripts/Tool.mjs': 'tool\n' });
+  try {
+    await sync({ into: dst, ref: src.sha, from: src.root });
+    git(src.root, ['mv', 'scripts/Tool.mjs', 'scripts/tool.mjs']);
+    const sha2 = commit(src.root, { base: ['scripts/tool.mjs'], sets: {} }, {});
+    await sync({ into: dst, ref: sha2, from: src.root });
+    assert.equal(readFileSync(path.join(dst, 'scripts/tool.mjs'), 'utf8'), 'tool\n', 'the renamed file survives its own stale delete');
+    assert.deepEqual(await check({ into: dst, from: src.root }), []);
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
+test('a record with a malformed env-prefix is refused, and transform never reads $ patterns', () => {
+  const rec = { ref: 'b'.repeat(40), envPrefix: 'ACME_', sets: [], files: [] };
+  for (const bad of ["$'", '$&_', 'acme_', 'ACME']) {
+    assert.throws(() => parseShaFile(formatShaFile({ ...rec, envPrefix: bad })), /env-prefix/, bad);
+  }
+  assert.equal(transform(`a ${P}X`, '$&'), 'a $&X');
+  assert.equal(transform(`a ${P}X b`, "$'"), "a $'X b");
+});
+
+test('a --sha-file that is a vendored path or the CICD record, or a vendored CICD record, is refused', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    for (const shaFile of ['scripts/base.mjs', 'scripts/BASE.mjs']) {
+      await assert.rejects(sync({ into: dst, ref: src.sha, shaFile, from: src.root }), /vendors a record file/, shaFile);
+    }
+    await assert.rejects(sync({ into: dst, ref: src.sha, shaFile: 'scripts/hooks/CICD-HOOKS-SHA', from: src.root }), /name the same file/);
+    await assert.rejects(sync({ into: dst, ref: src.sha, shaFile: 'scripts/X-SHA', cicdShaFile: 'scripts/x-sha', from: src.root }), /name the same file/);
+    const sha2 = commit(src.root, { ...MANIFEST, base: ['scripts/base.mjs', 'scripts/hooks/CICD-HOOKS-SHA'] }, { 'scripts/hooks/CICD-HOOKS-SHA': 'files:\n' });
+    await assert.rejects(sync({ into: dst, ref: sha2, from: src.root }), /vendors a record file.*scripts\/hooks\/CICD-HOOKS-SHA/);
+    assert.deepEqual(readdirSync(dst), [], 'nothing written');
+    // A CICD record without its files block cannot say what it owns: refused, never read as "nothing".
+    write(dst, 'scripts/hooks/CICD-HOOKS-SHA', `ref: ${'c'.repeat(40)}\n`);
+    assert.throws(() => cicdOwnedPaths(dst, 'scripts/hooks/CICD-HOOKS-SHA'), /no "files:" block/);
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
+test('a hard-linked target is replaced, never written through, so the other link keeps its bytes', async (t) => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  const elsewhere = consumer();
+  try {
+    await sync({ into: dst, ref: src.sha, from: src.root });
+    const victim = path.join(elsewhere, 'victim.mjs');
+    writeFileSync(victim, 'base\n');
+    rmSync(path.join(dst, 'scripts/base.mjs'));
+    try {
+      linkSync(victim, path.join(dst, 'scripts/base.mjs'));
+    } catch (err) {
+      t.skip(`this host refuses a hard link (${/** @type {NodeJS.ErrnoException} */ (err).code})`);
+      return;
+    }
+    const sha2 = commit(src.root, null, { 'scripts/base.mjs': 'base v2\n' });
+    await sync({ into: dst, ref: sha2, from: src.root });
+    assert.equal(readFileSync(path.join(dst, 'scripts/base.mjs'), 'utf8'), 'base v2\n');
+    assert.equal(readFileSync(victim, 'utf8'), 'base\n', 'the other link is untouched');
+    assert.deepEqual(
+      readdirSync(path.join(dst, 'scripts')).filter((n) => n.endsWith('.tmp')),
+      [],
+      'no temp file left behind',
+    );
+  } finally {
+    clean(src.root, dst, elsewhere);
+  }
+});
+
+test('a refs/replace substitution in the --from checkout is ignored', async () => {
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    const blob = git(src.root, ['rev-parse', `${src.sha}:scripts/base.mjs`]);
+    const evil = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: src.root, input: 'evil\n', encoding: 'utf8' }).trim();
+    git(src.root, ['replace', blob, evil]);
+    assert.equal(git(src.root, ['show', `${src.sha}:scripts/base.mjs`]), 'evil', 'the replacement is live for plain git');
+    await sync({ into: dst, ref: src.sha, from: src.root });
+    assert.equal(readFileSync(path.join(dst, 'scripts/base.mjs'), 'utf8'), 'base\n');
+  } finally {
+    clean(src.root, dst);
+  }
+});
+
+test('isSafePath takes strings only; an inherited property name is an unknown set; a manifest one filesystem cannot hold is refused', async () => {
+  assert.equal(isSafePath(['scripts/x']), false);
+  assert.equal(isSafePath({ toString: () => 'scripts/x' }), false);
+  const m = parseManifest(MANIFEST);
+  for (const name of ['constructor', 'toString', 'hasOwnProperty']) {
+    assert.throws(() => selectFiles(m, [name]), /unknown set/, name);
+  }
+  const src = fakeSource(MANIFEST, FILES);
+  const dst = consumer();
+  try {
+    await assert.rejects(sync({ into: dst, ref: src.sha, sets: ['constructor'], from: src.root }), /unknown set "constructor"/);
+  } finally {
+    clean(src.root, dst);
+  }
+  assert.throws(() => parseManifest({ base: ['scripts/a.mjs'], sets: { x: ['scripts/A.mjs'] } }), /differ only in case/);
+  assert.throws(() => parseManifest({ base: ['scripts/a'], sets: { x: ['scripts/a/b.mjs'] } }), /as a file and as a directory/);
+  assert.throws(() => selectFiles({ base: ['scripts/a.mjs', 'scripts/A.mjs'], sets: {} }, []), /differ only in case/);
+  assert.throws(() => selectFiles({ base: ['scripts/A'], sets: { x: ['scripts/a/b.mjs'] } }, ['x']), /as a file and as a directory/);
+  // A path listed twice in the same case is still fine (base and a set may share one).
+  assert.deepEqual(selectFiles(parseManifest({ base: ['scripts/a.mjs'], sets: { x: ['scripts/a.mjs'] } }), ['x']), ['scripts/a.mjs']);
 });
