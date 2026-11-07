@@ -44,8 +44,10 @@ test('requireAll reads only the exact value 1', () => {
 });
 
 test('skipUnlessPresent names every missing file and is false when all exist', () => {
-  assert.equal(skipUnlessPresent('manifest.json'), false);
-  assert.match(skipUnlessPresent('manifest.json', MISSING), new RegExp(MISSING.replace(/\./g, '\\.')));
+  // A file the ritual set itself ships, so this holds in every consumer (manifest.json exists only here).
+  const PRESENT = 'scripts/ritual/ritual-support.mjs';
+  assert.equal(skipUnlessPresent(PRESENT), false);
+  assert.match(skipUnlessPresent(PRESENT, MISSING), new RegExp(MISSING.replace(/\./g, '\\.')));
 });
 
 test('without the knob a missing file skips green', () => {
