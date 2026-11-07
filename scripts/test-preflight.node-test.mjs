@@ -9,6 +9,7 @@ import {
   inodePreflightFailure,
   inodeUsage,
   isWslBashLauncher,
+  maintenanceHint,
   patternMatchesPath,
   patternMatchesRootPath,
   pythonResolutionReport,
@@ -96,6 +97,35 @@ test('the failure prints the exact remedy, and only the regenerable caches', () 
   // The remedy tells the reader to check for a running test process before touching either cache.
   assert.match(msg, /Check for active test processes/);
   assert.match(msg, /ONLY these regenerable caches/);
+});
+
+test('with no maintenance command configured the message keeps the generic sentence', () => {
+  const msg = inodePreflightFailure({ consumers: () => [], dirs: ['/tmp'], statfsSync: statfs(1048576, 9), env: {} });
+  assert.match(msg, /If this repository has a test-cache maintenance command, it does exactly that safely; run it\./);
+  const blank = inodePreflightFailure({
+    consumers: () => [],
+    dirs: ['/tmp'],
+    statfsSync: statfs(1048576, 9),
+    env: { AGENT_TOOLING_TEST_CACHE_MAINTENANCE: '   ' },
+  });
+  assert.match(blank, /If this repository has a test-cache maintenance command/, 'blank reads as unset');
+});
+
+test('a maintenance command from the env knob is named in the message', () => {
+  const msg = inodePreflightFailure({
+    consumers: () => [],
+    dirs: ['/tmp'],
+    statfsSync: statfs(1048576, 9),
+    env: { AGENT_TOOLING_TEST_CACHE_MAINTENANCE: 'npm run cache:clean -- --apply' },
+  });
+  assert.match(msg, /does exactly that safely: npm run cache:clean -- --apply/);
+  assert.doesNotMatch(msg, /If this repository has a/);
+});
+
+test('an explicit maintenanceCommand option beats the env knob', () => {
+  const lines = maintenanceHint({ maintenanceCommand: 'make clean-cache', env: { AGENT_TOOLING_TEST_CACHE_MAINTENANCE: 'other' } });
+  assert.match(lines.join('\n'), /make clean-cache/);
+  assert.doesNotMatch(lines.join('\n'), /other/);
 });
 
 test('the failure explains the misattribution shape, which is the tell', () => {

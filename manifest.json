@@ -136,6 +136,11 @@
       "docs/agents/shared/shell-windows.md",
       "docs/agents/shared/worktrees-and-claims.md"
     ],
-    "ritual": []
+    "ritual": [
+      "scripts/ritual/agent-ritual-smoke.node-test.mjs",
+      "scripts/ritual/fixtures/bd-stub.cjs",
+      "scripts/ritual/fixtures/gh-stub.cjs",
+      "scripts/ritual/ritual-support.mjs"
+    ]
   }
 }
