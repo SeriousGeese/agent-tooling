@@ -136,14 +136,19 @@ if [ -f "$WORKTREE_NEW_HINT_FILE" ]; then
   source "$WORKTREE_NEW_HINT_FILE"
 fi
 
+# Written into node_modules after every successful install (all managers; only bun reads it). bun
+# leaves no record file of its own, and node_modules' directory mtime moves with any file written
+# under it, so it cannot say "installed after this lockfile". The stamp can.
+INSTALL_STAMP=".agent-tooling-install-stamp"
+
 # The package manager's own names. Only npm leaves the record (node_modules/.package-lock.json)
 # and the lockfile shape the version-drift check reads, so that one check is npm-only; every
-# other check is manager-neutral.
+# other check is manager-neutral. (bun's record is the install stamp above, not its own file.)
 case "$AGENT_CFG_PACKAGE_MANAGER" in
   npm)  PM_LOCKFILE="package-lock.json"; PM_RECORD="node_modules/.package-lock.json"; PM_LABEL="npm ci" ;;
   pnpm) PM_LOCKFILE="pnpm-lock.yaml";    PM_RECORD="node_modules/.modules.yaml";      PM_LABEL="pnpm install" ;;
   yarn) PM_LOCKFILE="yarn.lock";         PM_RECORD="node_modules/.yarn-integrity";    PM_LABEL="yarn install" ;;
-  bun)  PM_LOCKFILE="bun.lock";          PM_RECORD="node_modules";                    PM_LABEL="bun install" ;;
+  bun)  PM_LOCKFILE="bun.lock";          PM_RECORD="node_modules/$INSTALL_STAMP";     PM_LABEL="bun install" ;;
   *)    echo "ERROR: unsupported packageManager '$AGENT_CFG_PACKAGE_MANAGER'." >&2; exit 1 ;;
 esac
 PM="$AGENT_CFG_PACKAGE_MANAGER"
@@ -157,31 +162,34 @@ pm_lockfile_in() {
   fi
 }
 
-# Frozen install with scripts skipped (see the --ignore-scripts block below), then the
-# targeted rebuild, then the root package's own postinstall. Run inside the worktree.
+# Frozen install. npm skips scripts (see the --ignore-scripts block below), then runs the
+# targeted rebuild and the root package's own postinstall. The other managers run their install
+# scripts normally: only npm has a by-name rebuild to put skipped scripts back, so skipping them
+# elsewhere would leave a tree reported ready that was never built. Run inside the worktree.
 pm_install() {
   case "$PM" in
     npm)  npm ci --prefer-offline --ignore-scripts ;;
-    pnpm) pnpm install --frozen-lockfile --prefer-offline --ignore-scripts ;;
-    yarn) yarn install --frozen-lockfile --ignore-scripts ;;
-    bun)  bun install --frozen-lockfile --ignore-scripts ;;
+    pnpm) pnpm install --frozen-lockfile --prefer-offline ;;
+    yarn) yarn install --frozen-lockfile ;;
+    bun)  bun install --frozen-lockfile ;;
   esac
 }
 # Only npm has a targeted rebuild: rebuildable_packages names nothing for any other manager, so
-# this is never reached for them. Their install scripts stay skipped (see degraded_pm_notice).
+# this is never reached for them (their install scripts already ran).
 pm_rebuild() { npm rebuild "$@"; }
 
-# What a non-npm manager does NOT get, said once per install, because the support is thinner
-# than the table above suggests: npm is fully supported; the others install and nothing more.
-#   - no rebuild of the dependencies whose install scripts were skipped by --ignore-scripts
-#     (npm rebuilds the ones that need it; here a package that compiles on install is not built);
-#   - no lockfile-vs-installed version-drift check (it reads npm's own record);
-#   - a staleness check that compares the lockfile's mtime with the manager's record file
-#     (for bun that record is node_modules itself, so it is only a directory mtime);
-#   - yarn means yarn classic: yarn berry rejects --frozen-lockfile and --ignore-scripts.
+# What is still npm-only, said once per install, because the support is thinner than the table
+# above suggests. The other managers run their own install scripts normally (no --ignore-scripts),
+# so a package that compiles on install is built. What they do NOT get:
+#   - the targeted prebuild skip: WORKTREE_NEW_NATIVE_PREBUILDS packages are not exempted from
+#     their install script, and the by-name rebuild list is npm's (lockfile-derived);
+#   - the lockfile-vs-installed version-drift check (it reads npm's own record);
+#   - a staleness check that compares the lockfile's mtime with a record file (for bun that record
+#     is the install stamp this script writes, not a file bun maintains);
+#   - yarn means yarn classic: yarn berry rejects --frozen-lockfile.
 degraded_pm_notice() {
   [ "$PM" = "npm" ] && return 0
-  echo "WARNING: packageManager '$PM' is only partly supported: dependencies are installed with install scripts skipped and NOT rebuilt, and the staleness check is weaker (no version-drift check). npm is the fully supported manager." >&2
+  echo "WARNING: packageManager '$PM' is only partly supported: dependencies are installed with the manager's own install scripts, but there is no targeted prebuild skip and no version-drift check, and the staleness check is weaker. npm is the fully supported manager." >&2
 }
 pm_run_script() { "$PM" run "$1"; }
 
@@ -627,7 +635,9 @@ acquire_creation_lock() {
   common="$(git rev-parse --git-common-dir 2>/dev/null || echo '')"
   [ -n "$common" ] || return 0
   common="$(cd "$common" 2>/dev/null && pwd -P)" || return 0
-  lock="$common/worktree-create.lock"
+  # The name carries the consumer prefix (lowercased, dashed), so a consumer keeps the lock name its
+  # older copy used and an old and a new script on one machine still exclude each other.
+  lock="$common/$(printf %s AGENT_TOOLING_WORKTREE_CREATE | tr 'A-Z_' 'a-z-').lock"
   while :; do
     if mkdir "$lock" 2>/dev/null; then
       WORKTREE_LOCK_DIR="$lock"
@@ -693,7 +703,8 @@ acquire_creation_lock() {
 CREATION_MARKER=""
 
 creation_marker_path() {
-  printf '%s/.worktree-creating-%s' "$(dirname "$1")" "$(basename "$1")"
+  # Prefix-derived like the creation lock above: a consumer's own prefix names it.
+  printf '%s/.%s-%s' "$(dirname "$1")" "$(printf %s AGENT_TOOLING_WORKTREE_CREATING | tr 'A-Z_' 'a-z-')" "$(basename "$1")"
 }
 
 write_creation_marker() {
@@ -1109,9 +1120,16 @@ run_install() {
     # shellcheck disable=SC2086 # deliberate word-splitting: a package list
     ( cd "$dest" && pm_rebuild $targets ) || return 1
   fi
-  # --ignore-scripts skipped the root package's own postinstall; put it back.
-  if has_postinstall "$dest"; then
+  # npm's --ignore-scripts skipped the root package's own postinstall; put it back. The other
+  # managers ran it themselves, so running it again would do it twice.
+  if [ "$PM" = "npm" ] && has_postinstall "$dest"; then
     ( cd "$dest" && pm_run_script postinstall ) || return 1
+  fi
+  # The install record bun lacks (see INSTALL_STAMP): written last, so it is newer than the lockfile
+  # this install used, and only on success.
+  # A missing stamp reads as stale (safe: one more install), so a failed write is not fatal here.
+  if [ -d "$dest/node_modules" ]; then
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$dest/node_modules/$INSTALL_STAMP" 2>/dev/null || true
   fi
 }
 

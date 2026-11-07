@@ -91,11 +91,12 @@ variables are written with the neutral `AGENT_TOOLING_` prefix, which sync rewri
 (`<repo>`, `<slug>`), `worktreeScripts` (the commands printed in hints) and `claimHelper`.
 
 **Package managers.** npm is fully supported. pnpm, yarn (classic only: berry rejects
-`--frozen-lockfile --ignore-scripts`) and bun install, with these gaps, and a one-line warning is
-printed when one of them installs: dependencies whose install scripts were skipped are NOT rebuilt
-(npm rebuilds the ones that need it), there is no lockfile-versus-installed version-drift check, and
-staleness is the lockfile's mtime against the manager's record file (for bun that record is
-`node_modules` itself, a directory mtime, so it is weak).
+`--frozen-lockfile`) and bun install with `--frozen-lockfile` and run their own install scripts
+normally (only npm installs with `--ignore-scripts` plus a targeted rebuild). Still npm-only, and a
+one-line warning is printed when another manager installs: the targeted prebuild skip, and the
+lockfile-versus-installed version-drift check. Staleness is the lockfile's mtime against the
+manager's record file; bun has none, so the script writes `node_modules/.agent-tooling-install-stamp`
+after a successful install and bun's staleness compares the lockfile with that stamp.
 
 **Printed commands.** The `--install` fix commands and the `--await` hint name `worktree-new.sh` by
 absolute path, so they work pasted from any directory, unless `worktreeScripts` overrides them.

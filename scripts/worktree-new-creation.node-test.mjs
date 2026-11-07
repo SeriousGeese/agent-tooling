@@ -13,6 +13,7 @@ import {
   mkdirSync,
   writeFileSync,
   existsSync,
+  readFileSync,
   rmSync,
 } from 'node:fs';
 import path from 'node:path';
@@ -80,8 +81,12 @@ test('a failure after the worktree is added cleans up its own branch ref', async
 // already race real processes for the OTHER hazards this script guards against,
 // and the same technique here would be flaky by construction (this fix exists
 // precisely because a real race is not deterministic to observe from outside).
+// Both names derive from the prefix tokens the sync rewrites, so they follow a consumer's prefix
+// (a consumer's old copy names are reproduced byte for byte); a literal here would not.
+const LOCK_NAME = `${'AGENT_TOOLING_WORKTREE_CREATE'.toLowerCase().replaceAll('_', '-')}.lock`;
+const CREATING_NAME = 'AGENT_TOOLING_WORKTREE_CREATING'.toLowerCase().replaceAll('_', '-');
 function creationMarkerPath(dest) {
-  return path.join(path.dirname(dest), `.worktree-creating-${path.basename(dest)}`);
+  return path.join(path.dirname(dest), `.${CREATING_NAME}-${path.basename(dest)}`);
 }
 
 // the original version cleared the marker on a fixed 2500ms JS
@@ -248,7 +253,7 @@ test('a creation that fails its own empty-index guard still removes its own crea
 // These tests pin the mutex itself rather than trying to out-race the scheduler.
 // Every timing assertion here points the load-insensitive way: a busy box can only
 // make "has not created the worktree yet" MORE true, never less.
-const lockDir = (primary) => path.join(primary, '.git', 'worktree-create.lock');
+const lockDir = (primary) => path.join(primary, '.git', LOCK_NAME);
 
 function holdCreationLock(primary, ageSeconds = 0) {
   const dir = lockDir(primary);
@@ -433,4 +438,14 @@ test('a run that FAILS still releases the creation lock', async () => {
   } finally {
     removeTempDir(f.root, 'worktree-new.node-test');
   }
+});
+
+test('worktree-new.sh derives its creation lock and marker names from the prefix tokens, never a literal', () => {
+  const src = readFileSync(new URL('./worktree-new.sh', import.meta.url), 'utf8');
+  assert.match(src, /AGENT_TOOLING_WORKTREE_CREATE\b/);
+  assert.match(src, /AGENT_TOOLING_WORKTREE_CREATING\b/);
+  // A consumer's older copy used its own prefixed lock and marker names; a hardcoded neutral name
+  // would stop an old and a new script on one machine excluding each other.
+  assert.doesNotMatch(src, /worktree-create\.lock/);
+  assert.doesNotMatch(src, /\.worktree-creating-/);
 });

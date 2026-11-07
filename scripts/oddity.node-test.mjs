@@ -628,6 +628,39 @@ test('`unarchived` (stub bd) lists closed-but-unarchived entries through the sto
   }
 });
 
+test('cross-repo: the store config (sibling name AND bead prefix) comes from the CLI\'s own checkout, not the caller', () => {
+  const base = mkdtempSync(path.join(tmpdir(), 'oddity-test-xrepo-'));
+  try {
+    const store = fixture(path.join(base, 'Store'));
+    writeFileSync(path.join(store, 'agent-tooling.json'), JSON.stringify({ beadPrefix: 'Store' }));
+    writeFileSync(path.join(store, ARCHIVE_REL), '## 1. one\n\n- **Repo:** x (bead Store-abc12)\n\nAlso Other-abc12 was mentioned.\n');
+    const bin = installCli(store);
+    // A caller repo with NO agent-tooling.json and a different config of its own would not matter.
+    const caller = otherRepo(path.join(base, 'Caller'), 'https://github.com/x/caller.git');
+    const dbPath = path.join(base, 'stub-db.json');
+    writeFileSync(dbPath, JSON.stringify({
+      next: 1,
+      calls: [],
+      beads: [
+        { id: 'Store-abc12', title: 'archived', labels: ['tooling-oddity'], status: 'closed', closed_at: '2026-09-04T00:00:00Z' },
+        { id: 'Other-abc12', title: 'foreign id', labels: ['tooling-oddity'], status: 'closed', closed_at: '2026-09-05T00:00:00Z' },
+      ],
+    }));
+    const stubEnv = { ODDITY_BD_STUB: path.resolve('scripts/test-support/oddity-bd-stub.mjs'), ODDITY_STUB_DB: dbPath, CLAUDE_CODE_SESSION_ID: undefined };
+
+    // No AGENT_TOOLING_CHECKOUT: only sibling discovery by the store's beadPrefix finds it.
+    const r = run(['unarchived', '--json'], caller, stubEnv, bin);
+    assert.equal(r.status, 0, r.stderr);
+    // Only Store-prefixed ids count as archived: Store-abc12 is, Other-abc12 (another prefix) is not.
+    assert.deepEqual(JSON.parse(r.stdout).map((b) => b.id), ['Other-abc12']);
+    const { calls } = JSON.parse(readFileSync(dbPath, 'utf8'));
+    assert.ok(calls.length > 0);
+    for (const c of calls) assert.equal(norm(c.dir), norm(store), 'sibling discovery aimed bd at the store');
+  } finally {
+    removeTempDir(base, 'oddity.node-test');
+  }
+});
+
 // ── upstream registry: retire a workaround when its Claude Code issue closes ──
 
 const REGISTRY = {

@@ -69,8 +69,12 @@ const BD_TIMEOUT_MS = 120_000;
 
 // The store repo's bead prefix (what its beads are called) names the sibling checkout directory
 // and the dry-run id; this file's own config is the store's when it runs from the store.
-const BEAD_PREFIX = tryLoadConfig().config.beadPrefix ?? 'bd';
-const SIBLING_NAME = tryLoadConfig().config.beadPrefix;
+// Loaded from the root of THIS checkout (the store when the CLI runs from it), never from the
+// caller's cwd: the cross-repo case runs this file from the store while standing in another repo.
+const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const STORE_PREFIX = tryLoadConfig({ root: SCRIPT_ROOT }).config.beadPrefix;
+const BEAD_PREFIX = STORE_PREFIX ?? 'bd';
+const SIBLING_NAME = STORE_PREFIX;
 
 function git(args, cwd) {
   try {
@@ -84,8 +88,6 @@ function repoRoot() {
   return git(['rev-parse', '--show-toplevel']) || process.cwd();
 }
 
-/** The checkout the RUNNING script lives in, not the caller's repo, not $AGENT_TOOLING_CHECKOUT. */
-const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * The first CLI file whose on-disk content is an OLDER committed version than the
@@ -340,7 +342,7 @@ function main(argv) {
       process.stderr.write('bd list --json did not return JSON\n');
       return 1;
     }
-    const archived = archivedBeadIds(existsSync(archivePath) ? readFileSync(archivePath, 'utf8') : '');
+    const archived = archivedBeadIds(existsSync(archivePath) ? readFileSync(archivePath, 'utf8') : '', { beadPrefix: STORE_PREFIX });
     const entries = unarchivedClosed(rows, archived);
     if (flags.json) {
       process.stdout.write(`${JSON.stringify(entries, null, 2)}\n`);
@@ -390,7 +392,7 @@ function main(argv) {
       process.stderr.write(`archive not found at ${archivePath}\n`);
       return 1;
     }
-    recurrence = findArchiveEntry(readFileSync(archivePath, 'utf8'), n);
+    recurrence = findArchiveEntry(readFileSync(archivePath, 'utf8'), n, { beadPrefix: STORE_PREFIX });
     if (!recurrence) {
       process.stderr.write(`no archive entry numbered ${n} in ${ARCHIVE_REL}\n`);
       return 1;

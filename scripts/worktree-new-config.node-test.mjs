@@ -16,6 +16,8 @@ import {
   realpathSync,
   existsSync,
   rmSync,
+  utimesSync,
+  statSync,
 } from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -421,7 +423,7 @@ test('packageManager from agent-tooling.json selects the install command and the
       env: withBinFirst(ENV, binDir),
     });
     assert.match(stdout, /Installing dependencies \(pnpm install\)/);
-    assert.match(readFileSync(argsFile, 'utf8'), /install --frozen-lockfile --prefer-offline --ignore-scripts/);
+    assert.equal(readFileSync(argsFile, 'utf8').trim(), 'install --frozen-lockfile --prefer-offline');
   } finally {
     removeTempDir(f.root, 'worktree-new.node-test');
   }
@@ -536,7 +538,7 @@ test('a non-npm package manager prints a one-line degraded-support warning on in
       encoding: 'utf8',
       env: withBinFirst(ENV, binDir),
     });
-    assert.match(stderr, /WARNING: packageManager 'pnpm' is only partly supported.*NOT rebuilt.*no version-drift check/);
+    assert.match(stderr, /WARNING: packageManager 'pnpm' is only partly supported.*no targeted prebuild skip.*no version-drift check/);
   } finally {
     removeTempDir(f.root, 'worktree-new.node-test');
   }
@@ -552,6 +554,91 @@ test('the --await Fix command names the script by absolute path', async () => {
       assert.match(err.stderr, new RegExp(`bash ${ABS_SCRIPT} --install `), err.stderr);
       return true;
     });
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
+// bun leaves no install record of its own (its old record was the node_modules DIRECTORY, whose mtime
+// moves with any file written under it). The script writes node_modules/.agent-tooling-install-stamp
+// after a successful install, and bun's staleness compares the lockfile with that stamp.
+function bunTree(f, name, { stampNewer }) {
+  const target = path.join(f.root, name);
+  mkdirSync(target, { recursive: true });
+  markInstalled(target);
+  writeFileSync(path.join(f.primary, 'agent-tooling.json'), JSON.stringify({ packageManager: 'bun' }));
+  const lock = path.join(target, 'bun.lock');
+  const stamp = path.join(target, 'node_modules', '.agent-tooling-install-stamp');
+  writeFileSync(lock, '{}\n');
+  writeFileSync(stamp, 'stamp\n');
+  const older = new Date(Date.now() - 60_000);
+  const newer = new Date();
+  utimesSync(lock, stampNewer ? older : newer, stampNewer ? older : newer);
+  utimesSync(stamp, stampNewer ? newer : older, stampNewer ? newer : older);
+  // The directory's own mtime is the NEWEST of all: the old record would have read this as fresh.
+  utimesSync(path.join(target, 'node_modules'), new Date(Date.now() + 60_000), new Date(Date.now() + 60_000));
+  return target;
+}
+
+test('bun: a lockfile newer than the install stamp reads as stale, whatever the node_modules directory mtime says', async () => {
+  const f = fixture();
+  const target = bunTree(f, 'target-bun-stale', { stampNewer: false });
+  try {
+    await assert.rejects(run(f.primary, ['--await', toBashPath(target)]), (err) => {
+      assert.match(err.stderr, /missing or stale against bun\.lock/);
+      return true;
+    });
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
+test('bun: an install stamp newer than the lockfile reads as fresh', async () => {
+  const f = fixture();
+  const target = bunTree(f, 'target-bun-fresh', { stampNewer: true });
+  try {
+    const { stdout } = await run(f.primary, ['--await', toBashPath(target)]);
+    assert.doesNotMatch(stdout, /stale/);
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
+test('a non-npm install runs the manager\'s own install scripts (no --ignore-scripts) and does not run postinstall twice', async () => {
+  const f = fixture();
+  const target = path.join(f.root, 'target-pnpm-scripts');
+  mkdirSync(target, { recursive: true });
+  writeFileSync(path.join(target, 'package.json'), '{"name":"x","scripts":{"postinstall":"echo hi"}}\n');
+  writeFileSync(path.join(target, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+  writeFileSync(path.join(f.primary, 'agent-tooling.json'), JSON.stringify({ packageManager: 'pnpm' }));
+  const binDir = path.join(f.root, 'pnpm-shim-scripts');
+  mkdirSync(binDir, { recursive: true });
+  const argsFile = path.join(f.root, 'pnpm-args-scripts');
+  writeFileSync(path.join(binDir, 'pnpm'), `#!/bin/sh\necho "$@" >> "${argsFile}"\n`, { mode: 0o755 });
+  try {
+    await execFileAsync('bash', [script, '--install', toBashPath(target), '--wait'], { cwd: f.primary, encoding: 'utf8', env: withBinFirst(ENV, binDir) });
+    const calls = readFileSync(argsFile, 'utf8').trim().split('\n');
+    assert.deepEqual(calls, ['install --frozen-lockfile --prefer-offline']);
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
+test('a successful bun install writes the install stamp bun reads for staleness; it is newer than the lockfile', async () => {
+  const f = fixture();
+  const target = path.join(f.root, 'target-bun-stamp');
+  mkdirSync(target, { recursive: true });
+  writeFileSync(path.join(target, 'package.json'), '{"name":"x"}\n');
+  writeFileSync(path.join(target, 'bun.lock'), '{}\n');
+  writeFileSync(path.join(f.primary, 'agent-tooling.json'), JSON.stringify({ packageManager: 'bun' }));
+  const binDir = path.join(f.root, 'bun-shim-stamp');
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(path.join(binDir, 'bun'), '#!/bin/sh\nmkdir -p node_modules\n', { mode: 0o755 });
+  try {
+    await execFileAsync('bash', [script, '--install', toBashPath(target), '--wait'], { cwd: f.primary, encoding: 'utf8', env: withBinFirst(ENV, binDir) });
+    const stamp = path.join(target, 'node_modules', '.agent-tooling-install-stamp');
+    assert.ok(existsSync(stamp), 'the stamp is written after the install');
+    assert.ok(statSync(stamp).mtimeMs >= statSync(path.join(target, 'bun.lock')).mtimeMs);
   } finally {
     removeTempDir(f.root, 'worktree-new.node-test');
   }

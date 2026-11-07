@@ -2,6 +2,7 @@
 // Nothing here touches the process, the filesystem or `bd`; scripts/oddity.node-test.mjs
 // tests these directly and drives the CLI only in --dry-run mode (or against a stub bd).
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beadIdPattern, tryLoadConfig } from './agent-tooling-config.mjs';
 import { DISTINCT_ACTOR_RE } from './hygiene-bd-lib.mjs';
 
@@ -15,9 +16,14 @@ export const RECURRENCE_LABEL = 'recurrence';
 export const ARCHIVE_REL = process.env.AGENT_TOOLING_ODDITY_ARCHIVE || 'docs/agents/tooling-oddities-archive.md';
 
 const HEADER_RE = /^## (\d+)\.\s+(.*)$/;
-// Bead ids as the repo's beadPrefix spells them (any prefix when it set none).
-const BEAD_ID_SOURCE = beadIdPattern(tryLoadConfig().config).source;
-const BEAD_ID_RE = new RegExp(BEAD_ID_SOURCE, 'g');
+// Bead ids as the store repo's beadPrefix spells them (any prefix when it set none). The prefix is
+// threaded in by the caller (`{ beadPrefix }`); only when a caller names none does it fall back to the
+// config of the checkout THIS file lives in, never the caller's cwd.
+const LIB_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+function beadIdSource(opts) {
+  const beadPrefix = opts && 'beadPrefix' in opts ? opts.beadPrefix : tryLoadConfig({ root: LIB_ROOT }).config.beadPrefix;
+  return beadIdPattern({ beadPrefix }).source;
+}
 
 /** Next free archive entry number: entry numbers continue the sequence and are never reused. */
 export function nextArchiveNumber(archiveText) {
@@ -33,7 +39,8 @@ export function nextArchiveNumber(archiveText) {
  * The archive entry numbered `n`: its title, its body (up to the next `## ` header
  * or a top-level `# ` section), and every bead id mentioned in it, first-seen order.
  */
-export function findArchiveEntry(archiveText, n) {
+export function findArchiveEntry(archiveText, n, opts) {
+  const idSource = beadIdSource(opts);
   const lines = String(archiveText).split('\n');
   const start = lines.findIndex((l) => {
     const m = HEADER_RE.exec(l);
@@ -52,8 +59,8 @@ export function findArchiveEntry(archiveText, n) {
   // The entry's OWN bead is the one named as `bead <id>` in its header bullets
   // (`**Repo:** <name> (bead <id>)`); ids deeper in the body are often the sweep
   // bead that archived it or a related fix, so they come after.
-  const own = new RegExp(String.raw`\bbeads?\s+(${BEAD_ID_SOURCE})`, 'i').exec(lines.slice(start, Math.min(end, start + 8)).join('\n'));
-  const beadIds = [...new Set([...(own ? [own[1]] : []), ...(body.match(BEAD_ID_RE) ?? [])])];
+  const own = new RegExp(String.raw`\bbeads?\s+(${idSource})`, 'i').exec(lines.slice(start, Math.min(end, start + 8)).join('\n'));
+  const beadIds = [...new Set([...(own ? [own[1]] : []), ...(body.match(new RegExp(idSource, 'g')) ?? [])])];
   return { number: Number(n), title, body, beadIds };
 }
 
@@ -129,8 +136,8 @@ export function buildListArgs({ repo = '', json = false, bdDir = '', status = ''
 // the archive does not mention.
 
 /** Every bead id the archive text mentions anywhere (headers, bodies, Resolution blocks). */
-export function archivedBeadIds(archiveText) {
-  return new Set(String(archiveText ?? '').match(BEAD_ID_RE) ?? []);
+export function archivedBeadIds(archiveText, opts) {
+  return new Set(String(archiveText ?? '').match(new RegExp(beadIdSource(opts), 'g')) ?? []);
 }
 
 /** The PR number a close-beads close reason names (`Auto-closed: merged via PR #<n> (…)`), or null. */
@@ -165,7 +172,7 @@ export function formatUnarchivedLines(entries) {
 // ── One friction store for every repo on the box ───────────────
 // Every entry, from every repo, is a bead in the STORE repo's beads database, under the store's
 // one id prefix; the ORIGIN repo is a `repo:<name>` label. Never a second prefix (bd calls a
-// multi-prefix database corrupt and BEAD_ID_RE above matches one prefix), never
+// multi-prefix database corrupt and the bead id pattern above matches one prefix), never
 // `bd repo add` (that hydrates a separate planning DB). A caller in another repo
 // reaches the DB with `bd -C <store checkout>`, so the CLI stays in the store.
 
