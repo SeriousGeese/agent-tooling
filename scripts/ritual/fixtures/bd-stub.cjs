@@ -25,9 +25,9 @@
 //                                         order around
 // Anything else exits 0 so an incidental bd call can never break a script.
 'use strict';
-// CommonJS require is intentional: the smoke copies this file to an extensionless `bd` on
-// PATH, which Node runs as CommonJS, so an ESM `import` would not resolve.
-const fs = require('fs');
+// process.getBuiltinModule rather than require(): the file runs as CommonJS (see above), and a
+// consumer's lint config may ban require().
+const fs = process.getBuiltinModule('node:fs');
 
 const DB_PATH = process.env.RITUAL_BD_DB || '';
 
@@ -48,6 +48,10 @@ function out(s) {
 
 const args = process.argv.slice(2);
 const [cmd] = args;
+
+// RITUAL_BD_LOG: append each call's argv, one line per call, so a test can prove THIS stub (and
+// not a real bd found elsewhere on PATH) was the one that ran.
+if (process.env.RITUAL_BD_LOG) fs.appendFileSync(process.env.RITUAL_BD_LOG, `${args.join(' ')}\n`);
 
 if (cmd === 'dolt' && (args[1] === 'pull' || args[1] === 'push')) {
   // The sync path we deliberately neutralise: report success, touch no remote.

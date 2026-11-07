@@ -167,6 +167,21 @@ needs `worktree-rm.sh`) and vendor CICD's `agent-hooks/` (the guards and `check-
 and the rest still run; nothing fails because a set was not adopted. Each step's header comment lists the files it
 is keyed on.
 
+**Strict mode.** `AGENT_TOOLING_RITUAL_REQUIRE_ALL=1` turns every skip caused by a missing file into a failing
+test that names the file (and makes an absent guard in step 3c a failure instead of a diagnostic). A consumer whose
+tree has every file sets it in its ritual command, so a deleted hook cannot turn a step green by skipping it.
+Without it, absent files skip and step 3c reports the guards it could not check with `t.diagnostic`. Skips for a
+missing `bash` or `git` are never promoted. `ritual-support.node-test.mjs` proves the knob.
+
+**Fixture hygiene.** Step 1 sets `RITUAL_BD_LOG`, and the bd stub appends each call's argv to it; the step asserts
+`dolt pull` and `dolt push` appear, which proves the stub and not a real `bd` on PATH ran. The child env drops
+`BEADS_DIR` and `AGENT_TOOLING_WORKTREE_ROOT`. A broken `agent-tooling.json` fails the file at load rather than
+reading as the defaults (a missing one still does).
+
+**Windows.** `bd-dolt-sync.mjs` reaches the stub through its shell fallback on `bd.cmd`, and that fallback leaves the
+path unquoted, so a temp directory containing a space fails loudly rather than running something else. Quoting is
+the beads set's job, not this one's.
+
 **Consumer values** come from `agent-tooling.json` through the one loader: `beadPrefix` (the fixture bead ids;
 `bd` when unset), `worktreeNamePattern` (where the fixture expects the new worktree; `worktreeRoot` is pinned
 inside the sandbox), `claimHelper` (the path a refusal must name) and `envPrefix` (the guards' hatch names). The

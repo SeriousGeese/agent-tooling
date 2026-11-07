@@ -140,7 +140,8 @@
       "scripts/ritual/agent-ritual-smoke.node-test.mjs",
       "scripts/ritual/fixtures/bd-stub.cjs",
       "scripts/ritual/fixtures/gh-stub.cjs",
-      "scripts/ritual/ritual-support.mjs"
+      "scripts/ritual/ritual-support.mjs",
+      "scripts/ritual/ritual-support.node-test.mjs"
     ]
   }
 }

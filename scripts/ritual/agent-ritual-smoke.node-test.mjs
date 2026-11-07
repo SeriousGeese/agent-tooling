@@ -28,7 +28,6 @@
 // Hermeticity: every step runs against a throwaway git repo with a bare "origin" and a
 // throwaway JSON beads "database" (fixtures/bd-stub.cjs on a temp PATH dir). bd's real sync
 // path (bd-dolt-sync.mjs -> `bd dolt pull|push`) is neutralised by the stub returning exit 0.
-import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -39,6 +38,7 @@ import { removeTempDir } from '../test-support/cleanup.mjs';
 import {
   GIT_ENV,
   REPO,
+  REQUIRE_ALL_KNOB,
   SETTINGS_FILE,
   SKIP_BASH,
   beadId,
@@ -55,6 +55,8 @@ import {
   readJsonOptional,
   real,
   repoFixture,
+  requireAll,
+  ritualTest,
   runHook,
   scriptsDir,
   skipUnlessPresent,
@@ -80,7 +82,7 @@ const SKIP_CLAIM = firstReason(SKIP_BASH, skipUnlessPresent(...CLAIM_FILES));
 const CLAIM_HELPER_RE = escapeRe(consumer.claimHelper);
 
 // ── Step 1 — claim.sh ───────────────────────────────────────────────────────
-test(
+ritualTest(
   'step 1 — claim.sh claims under the session actor id, leaves the checkout on main, and creates a published dedicated worktree',
   { skip: SKIP_CLAIM },
   () => {
@@ -95,6 +97,7 @@ test(
       );
 
       const FIXTURE_SID = 'ritualsmoke0000feed';
+      const bdLog = path.join(f.root, 'bd-calls.log');
       const branch = 'feat/ritual-smoke-claim';
       const expected = resolveActorId({
         env: { CLAUDE_CODE_SESSION_ID: FIXTURE_SID },
@@ -104,6 +107,7 @@ test(
       const env = withBin(binDir, {
         CLAUDE_CODE_SESSION_ID: FIXTURE_SID,
         RITUAL_BD_DB: dbPath,
+        RITUAL_BD_LOG: bdLog,
         BEADS_ACTOR: '', // force claim.sh to DERIVE the per-session id
         // ...and derive it from the FIXTURE's git identity. resolveActorId reads
         // BEADS_ACTOR_BASE ahead of git user.name, so an inherited one (a repo's own tooling may
@@ -118,6 +122,11 @@ test(
         env,
       });
       assert.equal(r.status, 0, `claim.sh failed:\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}`);
+
+      // (0) the STUB ran, not a real bd found elsewhere on PATH: both sync calls were logged
+      const calls = readFileSync(bdLog, 'utf8').split('\n');
+      assert.ok(calls.includes('dolt pull'), `bd dolt pull reached the stub; saw:\n${calls.join('\n')}`);
+      assert.ok(calls.includes('dolt push'), `bd dolt push reached the stub; saw:\n${calls.join('\n')}`);
 
       // (a) the assignee is the session-SUFFIXED id, not a bare team name
       const db = JSON.parse(readFileSync(dbPath, 'utf8'));
@@ -140,7 +149,7 @@ test(
   },
 );
 
-test(
+ritualTest(
   'step 1b — claim.sh works from INSIDE a linked worktree: claims, leaves that worktree’s HEAD alone, creates the new worktree',
   { skip: SKIP_CLAIM },
   () => {
@@ -201,7 +210,7 @@ test(
   },
 );
 
-test(
+ritualTest(
   'step 1c — claim.sh with NO session identity (a Codex/human shell) refuses before touching the bead, and a Codex thread id claims per-session',
   { skip: firstReason(SKIP_BASH, skipUnlessPresent('scripts/claim.sh')) },
   () => {
@@ -250,7 +259,7 @@ test(
 // ── Step 2 — claim guards ────────────────────────────────────────────────────
 // The fresh-claim check lives in claim.sh (claim-age.mjs); the PreToolUse hook only refuses a
 // bare `bd update --claim` so agents go through claim.sh.
-test('step 2a — claim.sh refuses a fresh actor stealing an in-progress claim, and the steal hatch takes it over (end to end)', { skip: SKIP_CLAIM }, () => {
+ritualTest('step 2a — claim.sh refuses a fresh actor stealing an in-progress claim, and the steal hatch takes it over (end to end)', { skip: SKIP_CLAIM }, () => {
   const f = repoFixture('collide', { userName: 'Ritual Tester', withConfig: true });
   try {
     const binDir = makeBinDir(f.root);
@@ -291,7 +300,7 @@ test('step 2a — claim.sh refuses a fresh actor stealing an in-progress claim, 
   }
 });
 
-test('step 2a (logic) — decide() blocks a fresh cross-actor steal but not a stale one or your own claim', { skip: claimAge ? false : skipUnlessPresent('scripts/claim-age.mjs') }, () => {
+ritualTest('step 2a (logic) — decide() blocks a fresh cross-actor steal but not a stale one or your own claim', { skip: claimAge ? false : skipUnlessPresent('scripts/claim-age.mjs') }, () => {
   const { decide } = claimAge;
   const now = Date.parse('2026-08-23T12:00:00Z');
   const fresh = { assignee: 'other-bot-bbbbbbbb', status: 'in_progress', started_at: new Date(now - 60_000).toISOString() };
@@ -306,7 +315,7 @@ test('step 2a (logic) — decide() blocks a fresh cross-actor steal but not a st
   assert.equal(decide({ issue: open, ...base }).blocked, false, 'an unclaimed bead is free');
 });
 
-test('step 2b — block-bare-claim refuses a bare `bd update --claim` and names the claim helper', { skip: skipUnlessPresent('scripts/hooks/block-bare-claim.mjs') }, () => {
+ritualTest('step 2b — block-bare-claim refuses a bare `bd update --claim` and names the claim helper', { skip: skipUnlessPresent('scripts/hooks/block-bare-claim.mjs') }, () => {
   const env = { ...process.env, [hatch('ALLOW_BARE_CLAIM')]: '' };
   const r = runHook('block-bare-claim.mjs', `bd update ${beadId('ritual3')} --claim`, { env });
   assert.equal(r.status, 2, `expected a refusal; got ${r.status}\n${r.stderr}`);
@@ -314,7 +323,7 @@ test('step 2b — block-bare-claim refuses a bare `bd update --claim` and names 
   assert.equal(runHook('block-bare-claim.mjs', `bash ${consumer.claimHelper} ${beadId('x')} feat/y`, { env }).status, 0);
 });
 
-test('step 2b (logic) — the claim helper and prose about a claim are not bare claims', { skip: bareClaim ? false : skipUnlessPresent('scripts/hooks/block-bare-claim.mjs') }, () => {
+ritualTest('step 2b (logic) — the claim helper and prose about a claim are not bare claims', { skip: bareClaim ? false : skipUnlessPresent('scripts/hooks/block-bare-claim.mjs') }, () => {
   const { bareClaimSegment } = bareClaim;
   assert.equal(bareClaimSegment(`bash ${consumer.claimHelper} ${beadId('x')} --claim-only`), null);
   assert.equal(bareClaimSegment(`git commit -m "bd update ${beadId('x')} --claim is refused"`), null);
@@ -325,7 +334,7 @@ test('step 2b (logic) — the claim helper and prose about a claim are not bare 
 // ── Step 3 — masked-gates hook ───────────────────────────────────────────────
 const SKIP_MASKED = skipUnlessPresent('scripts/hooks/block-masked-gates.mjs');
 
-test('step 3 — block-masked-gates: a gate piped to a filter is blocked; bare / pipefail-peek / quoted-gate-word pass', { skip: SKIP_MASKED }, () => {
+ritualTest('step 3 — block-masked-gates: a gate piped to a filter is blocked; bare / pipefail-peek / quoted-gate-word pass', { skip: SKIP_MASKED }, () => {
   const blocked = runHook('block-masked-gates.mjs', 'npm test | tail -5');
   assert.equal(blocked.status, 2, 'a gate piped into tail is blocked');
   assert.match(blocked.stderr, /masks its exit code/);
@@ -348,7 +357,7 @@ test('step 3 — block-masked-gates: a gate piped to a filter is blocked; bare /
   assert.equal(maskedGates.isMaskedGate('set -o pipefail; npm test | tail -5'), false);
 });
 
-test('step 3b — block-masked-gates covers the PowerShell tool too, with its own hatch', { skip: SKIP_MASKED }, () => {
+ritualTest('step 3b — block-masked-gates covers the PowerShell tool too, with its own hatch', { skip: SKIP_MASKED }, () => {
   // The hook is registered under `Bash|PowerShell` and branches on tool_name. PowerShell has no
   // pipefail (a pipeline ending in a cmdlet reports the CMDLET's success), so the hatch there
   // is an explicit $LASTEXITCODE read.
@@ -386,20 +395,27 @@ function registeredTools(guard) {
   return new Set(matchers.flatMap((m) => m.split('|')));
 }
 
-test('step 3c — settings.json really registers each cross-shell guard for BOTH tools', { skip: firstReason(skipUnlessPresent(SETTINGS_FILE)) }, (t) => {
+ritualTest('step 3c — settings.json really registers each cross-shell guard for BOTH tools', { skip: firstReason(skipUnlessPresent(SETTINGS_FILE)) }, (t) => {
   // The predicate can be perfect and the guard still absent: a hook only runs for the tools its
   // matcher names. Every guard whose hazard exists in both shells is listed here, so a future
   // registration under a Bash-only group fails HERE rather than on the day the PowerShell tool
   // runs the incident command. Guards absent from this checkout are not asserted on (they are
   // not installed); a guard that IS installed must be registered. Bash-only guards (the `\\`
   // collapse, heredoc size) are deliberately absent: their hazard is the Bash tool's handoff.
-  const guards = [
+  let guards = [
     'block-masked-gates.mjs',
     'block-uncommitted-restore.mjs',
     'block-npx-unlisted.mjs',
     'block-break-glass.mjs',
     'block-pattern-kill.mjs',
-  ].filter((g) => hasFile(`scripts/hooks/${g}`));
+  ];
+  const absent = guards.filter((g) => !hasFile(`scripts/hooks/${g}`));
+  if (absent.length) {
+    const note = `scripts/hooks guards not present, so not asserted on: ${absent.join(', ')}`;
+    assert.ok(!requireAll(), `${REQUIRE_ALL_KNOB}=1 and ${note}`);
+    t.diagnostic(note);
+  }
+  guards = guards.filter((g) => !absent.includes(g));
   if (guards.length === 0) {
     t.skip('none of the cross-shell guards is installed under scripts/hooks');
     return;
@@ -412,7 +428,7 @@ test('step 3c — settings.json really registers each cross-shell guard for BOTH
   }
 });
 
-test('step 3d — block-break-glass keeps break-glass human-only, for every tool that can reach it', { skip: skipUnlessPresent(SETTINGS_FILE, 'scripts/hooks/block-break-glass.mjs') }, () => {
+ritualTest('step 3d — block-break-glass keeps break-glass human-only, for every tool that can reach it', { skip: skipUnlessPresent(SETTINGS_FILE, 'scripts/hooks/block-break-glass.mjs') }, () => {
   // The `break-glass` label, BREAK_GLASS* variables and `gh pr merge --admin` are human-only.
   // The guard has NO hatch on purpose, so this proves an inline one does not work, and that the
   // Monitor and MCP registrations exist alongside Bash and PowerShell (3c covers those two).
@@ -428,7 +444,7 @@ test('step 3d — block-break-glass keeps break-glass human-only, for every tool
   assert.equal(runHook('block-break-glass.mjs', 'gh pr merge 5 --squash --match-head-commit abc').status, 0, 'plain merge');
 });
 
-test(
+ritualTest(
   'step 3e — every repo hook resolves the repo root, so a session in a subdirectory stays guarded',
   { skip: firstReason(SKIP_BASH, skipUnlessPresent(SETTINGS_FILE, 'scripts/hooks/block-break-glass.mjs', 'scripts/hooks/block-orphaned-worktree-cwd.mjs')) },
   () => {
@@ -489,7 +505,7 @@ test(
 );
 
 // ── Step 4 — worktree branch-switch hook ─────────────────────────────────────
-test('step 4 — block-worktree-branch-switch blocks `checkout -b` inside a worktree, allows it in the primary', { skip: skipUnlessPresent('scripts/hooks/block-worktree-branch-switch.mjs') }, () => {
+ritualTest('step 4 — block-worktree-branch-switch blocks `checkout -b` inside a worktree, allows it in the primary', { skip: skipUnlessPresent('scripts/hooks/block-worktree-branch-switch.mjs') }, () => {
   const root = mkRoot('wtsw');
   try {
     const primary = path.join(root, 'primary');
@@ -526,7 +542,7 @@ test('step 4 — block-worktree-branch-switch blocks `checkout -b` inside a work
 // ./ritual-support.mjs and the stubs in ./fixtures. See the README.
 
 // ── Step 6 — worktree-rm.sh teardown ─────────────────────────────────────────
-test('step 6 — worktree-rm removes the target from the primary, spares siblings, and refuses to remove its own cwd', { skip: firstReason(SKIP_BASH, skipUnlessPresent('scripts/worktree-rm.sh')) }, () => {
+ritualTest('step 6 — worktree-rm removes the target from the primary, spares siblings, and refuses to remove its own cwd', { skip: firstReason(SKIP_BASH, skipUnlessPresent('scripts/worktree-rm.sh')) }, () => {
   const f = repoFixture('teardown');
   try {
     const wtA = path.join(f.root, 'wt-a');
@@ -553,7 +569,7 @@ test('step 6 — worktree-rm removes the target from the primary, spares sibling
 });
 
 // ── Step 7 — stale-hooks SessionStart warning ────────────────────────────────
-test('step 7 — check-stale-hooks warns when a watched hook file differs from origin/main, and is silent when current', { skip: firstReason(SKIP_BASH, skipUnlessPresent('scripts/hooks/check-stale-hooks.mjs')) }, () => {
+ritualTest('step 7 — check-stale-hooks warns when a watched hook file differs from origin/main, and is silent when current', { skip: firstReason(SKIP_BASH, skipUnlessPresent('scripts/hooks/check-stale-hooks.mjs')) }, () => {
   const f = repoFixture('stalehooks');
   try {
     const hook = path.join(scriptsDir, 'hooks', 'check-stale-hooks.mjs');

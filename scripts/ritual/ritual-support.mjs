@@ -10,6 +10,8 @@
 // needs a script from another set locates it on disk and SKIPS, naming the missing file,
 // when it is absent: this file imports only base files, because a set is closed over base
 // and itself.
+import nodeTest from 'node:test';
+import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, cpSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -42,7 +44,10 @@ export const SKIP_BASH = HAVE_BASH && HAVE_GIT ? false : 'requires bash + git on
 // ── consumer config ─────────────────────────────────────────────────────────
 // A broken agent-tooling.json reads as the defaults here; the loader's own suite owns
 // reporting it.
-export const consumer = tryLoadConfig({ root: REPO }).config;
+// A MISSING file reads as the defaults; a file that is there but broken must not.
+const loaded = tryLoadConfig({ root: REPO });
+if (loaded.error) throw new Error(`agent-tooling.json is unusable, so the ritual smoke cannot use the consumer's values: ${loaded.error}`);
+export const consumer = loaded.config;
 export const BEAD_PREFIX = consumer.beadPrefix ?? 'bd';
 
 /** A bead id in the consumer's own prefix, e.g. beadId('ritual1') is `<prefix>-ritual1`. */
@@ -67,7 +72,26 @@ export const hasFile = (rel) => existsSync(path.join(REPO, ...rel.split('/')));
  */
 export function skipUnlessPresent(...rels) {
   const missing = rels.filter((r) => !hasFile(r));
-  return missing.length ? `${missing.join(', ')} not present in this repository (its set is not installed)` : false;
+  return missing.length ? `${missing.join(', ')} ${NOT_PRESENT}` : false;
+}
+
+const NOT_PRESENT = 'not present in this repository (its set is not installed)';
+export const REQUIRE_ALL_KNOB = 'AGENT_TOOLING_RITUAL_REQUIRE_ALL';
+
+/** True when the consumer asked for strict mode: a missing file is a failure, never a skip. */
+export const requireAll = (env = process.env) => env[REQUIRE_ALL_KNOB] === '1';
+
+/**
+ * node:test's `test`, except that under AGENT_TOOLING_RITUAL_REQUIRE_ALL=1 a skip caused by a
+ * missing file (a skipUnlessPresent reason) registers a FAILING test that names the file. A
+ * consumer whose tree has every file sets the knob in its ritual command, so a deleted hook
+ * cannot turn a step green by skipping it.
+ */
+export function ritualTest(name, opts, fn) {
+  if (typeof opts?.skip === 'string' && opts.skip.includes(NOT_PRESENT) && requireAll()) {
+    return nodeTest(name, () => assert.fail(`${REQUIRE_ALL_KNOB}=1 and a file this step needs is missing: ${opts.skip}`));
+  }
+  return nodeTest(name, opts, fn);
 }
 
 /** The first truthy skip reason, or false. */
@@ -174,7 +198,8 @@ export function withBin(binDir, extra = {}) {
   };
   // A host worktree root would put the fixture worktrees in the REAL shared worktree directory,
   // where they outlive the sandbox.
-  for (const k of Object.keys(env)) if (k.toUpperCase() === 'AGENT_TOOLING_WORKTREE_ROOT') delete env[k];
+  // BEADS_DIR would point bd-dolt-sync at a real beads workspace instead of the stub's.
+  for (const k of Object.keys(env)) if (['AGENT_TOOLING_WORKTREE_ROOT', 'BEADS_DIR'].includes(k.toUpperCase())) delete env[k];
   return { ...env, ...extra };
 }
 
