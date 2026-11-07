@@ -35,7 +35,7 @@ controls a workflow decision (for example, an adapter's `0`, `1`, `3`, `5` or `9
 `exit $LASTEXITCODE` the final PowerShell statement:
 
 ```powershell
-rtk proxy node scripts/your-gate.mjs; exit $LASTEXITCODE
+rtk proxy node <your-gate>.mjs; exit $LASTEXITCODE
 ```
 
 PowerShell's implicit exit can normalize an external-command failure to `1`; explicit propagation
