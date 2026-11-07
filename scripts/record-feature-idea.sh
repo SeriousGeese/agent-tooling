@@ -122,8 +122,23 @@ dolt_pull_resilient || echo "WARNING: Dolt pull failed after retries, continuing
 echo "Checking for duplicates..."
 # `bd list --title-contains` lists non-closed beads on every bd version; `bd search` includes closed
 # ones since bd 1.3, which would count every closed namesake as a duplicate.
-DUPE_CHECK=$(bd list --title-contains "$TITLE" --json -n 0 2>/dev/null || echo "[]")
-DUPE_COUNT=$(echo "$DUPE_CHECK" | jq 'length' 2>/dev/null || echo "0")
+#
+# A failed lookup is NOT "no duplicates": a bd that errored or printed something that is not a JSON
+# array would otherwise read as an empty result and the script would create a namesake. So the
+# status of `bd list` and of the `jq` length are each checked, and either failing stops the script
+# before anything is created.
+DUPE_STATUS=0
+DUPE_CHECK=$(bd list --title-contains "$TITLE" --json -n 0 2>/dev/null) || DUPE_STATUS=$?
+if [[ "$DUPE_STATUS" -ne 0 ]]; then
+  echo "ERROR: the duplicate check failed: 'bd list --title-contains' exited $DUPE_STATUS. Nothing was created." >&2
+  exit 1
+fi
+DUPE_STATUS=0
+DUPE_COUNT=$(printf '%s' "$DUPE_CHECK" | jq -e 'if type == "array" then length else error("not an array") end' 2>/dev/null) || DUPE_STATUS=$?
+if [[ "$DUPE_STATUS" -ne 0 || ! "$DUPE_COUNT" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: the duplicate check failed: 'bd list --title-contains --json' did not return a JSON array (malformed bd output, or jq failed). Nothing was created." >&2
+  exit 1
+fi
 if [[ "$DUPE_COUNT" -gt 0 ]]; then
   echo "WARNING: Found $DUPE_COUNT potential duplicate(s). Creating anyway..."
 fi
