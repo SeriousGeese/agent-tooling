@@ -43,7 +43,7 @@ argv splitter). Everything else is in a named set, chosen with
 | `session` | The session phase hook, the session tracker (a per-session step timeline, optionally a Prometheus textfile), and `core.hooksPath` repair. See [The session set](#the-session-set) |
 | `skills` | Process skills under `.agents/skills/`: `bead-workflow` (with its `agents/openai.yaml`), `beads-bulk`, `beads-hygiene`, `prompt-next-work`, `bead-chains`, `mvp-readiness`, `recurring-task`, `window-review`, `dependabot-handler`. (`ask-review` ships in `asks`, with the script it drives.) `bead-chains/SKILL.md` and `prompt-next-work/SKILL.md` run `scripts/bead-chains.mjs`, so they need the `hygiene` set installed alongside. Each may read a consumer-owned `LOCAL.md`, see Skill overlays |
 | `docs` | The generic halves of the agent docs under `docs/agents/shared/`: `worktrees-and-claims.md`, `beads-sync.md`, `bead-filing.md`, `shell-guidelines.md`, `shell-windows.md` |
-| `ritual` | The agent-ritual conformance smoke |
+| `ritual` | The agent-ritual conformance smoke (`scripts/ritual/`): claim, worktree, gates, teardown and the hooks, end to end and hermetic. See [The ritual set](#the-ritual-set) |
 
 `all` is every set; `none` is `base` alone. A set may be empty until its files move here.
 
@@ -149,6 +149,52 @@ never-synced `scripts/worktree-new.hint.sh` (or the file named by `WORKTREE_NEW_
 `AGENT_TOOLING_ALLOW_CLAIM_STEAL`, `AGENT_TOOLING_CLAIM_COLLISION_HOURS` (default 4),
 `AGENT_TOOLING_ALLOW_SHARED_CLAIM_ACTOR`, `AGENT_TOOLING_DEV_SERVER_PATTERN`.
 
+## The ritual set
+
+`scripts/ritual/agent-ritual-smoke.node-test.mjs` walks the agent ritual the way an agent does it, against a
+throwaway git repo with a bare origin and a JSON beads "database" served by `fixtures/bd-stub.cjs` (plus a `gh`
+stub): `claim.sh` (from main, from inside a linked worktree, with no session identity, against a fresh foreign
+claim and its steal hatch), the fresh-claim decision, the bare-claim and masked-gate guards (Bash and PowerShell),
+the hook registrations in `.claude/settings.json`, the worktree branch-switch guard, `worktree-rm.sh` teardown and
+the stale-hooks warning. It never touches a shared tracker remote or the real `.beads`. `ritual-support.mjs` holds
+the fixtures (`repoFixture`, `makeBinDir`, `withBin`, `runHook`, `skipUnlessPresent`, `loadOptional`, ...) so a
+consumer overlay can reuse them.
+
+**Sets it expects alongside it.** It imports only `base`. The rest it finds on disk. For the full walk install
+`--set beads,worktree,ritual` (claim.sh needs `bd-dolt-sync.mjs`, `claim-age.mjs` and `worktree-new.sh`; teardown
+needs `worktree-rm.sh`) and vendor CICD's `agent-hooks/` (the guards and `check-stale-hooks.mjs`) with a
+`.claude/settings.json`. **A step whose files are absent skips**, with the missing file named in the skip reason,
+and the rest still run; nothing fails because a set was not adopted. Each step's header comment lists the files it
+is keyed on.
+
+**Strict mode.** `AGENT_TOOLING_RITUAL_REQUIRE_ALL=1` turns every skip caused by a missing file into a failing
+test that names the file (and makes an absent guard in step 3c a failure instead of a diagnostic). A consumer whose
+tree has every file sets it in its ritual command, so a deleted hook cannot turn a step green by skipping it.
+Without it, absent files skip and step 3c reports the guards it could not check with `t.diagnostic`. Skips for a
+missing `bash` or `git` are never promoted. `ritual-support.node-test.mjs` proves the knob.
+
+**Fixture hygiene.** Step 1 sets `RITUAL_BD_LOG`, and the bd stub appends each call's argv to it; the step asserts
+`dolt pull` and `dolt push` appear, which proves the stub and not a real `bd` on PATH ran. The child env drops
+`BEADS_DIR` and `AGENT_TOOLING_WORKTREE_ROOT`. A broken `agent-tooling.json` fails the file at load rather than
+reading as the defaults (a missing one still does).
+
+**Windows.** `bd-dolt-sync.mjs` reaches the stub through its shell fallback on `bd.cmd`, and that fallback leaves the
+path unquoted, so a temp directory containing a space fails loudly rather than running something else. Quoting is
+the beads set's job, not this one's.
+
+**Consumer values** come from `agent-tooling.json` through the one loader: `beadPrefix` (the fixture bead ids;
+`bd` when unset), `worktreeNamePattern` (where the fixture expects the new worktree; `worktreeRoot` is pinned
+inside the sandbox), `claimHelper` (the path a refusal must name) and `envPrefix` (the guards' hatch names). The
+claim.sh steps use the `AGENT_TOOLING_*` knobs, which sync rewrites. The bd stub runs on Windows through a `.cmd`
+sibling and `BD_CLI`.
+
+**A step only one consumer can run is an overlay, not a branch in this file.** Step 5 is reserved for that: a
+consumer-owned test (for example `scripts/ritual/consumer-ritual.node-test.mjs`, in no manifest, so sync never
+touches it) imports `./ritual-support.mjs` and reuses `./fixtures/bd-stub.cjs` and `gh-stub.cjs` for a merge-time
+script that exists in no shared set, such as one that closes beads from a merged PR body. The stubs read
+`RITUAL_BD_DB` and `RITUAL_PR_STATE|TITLE|BODY|BASE|HEAD` from the environment. A step whose script does exist in
+a shared set stays here and skips when it is absent.
+
 ### The `hygiene` set
 
 Epic hygiene (`epic-hygiene.mjs`), the blocker-chain finder (`bead-chains.mjs`), the idea inbox (`idea-inbox.mjs`), the feature-idea recorder
@@ -175,6 +221,20 @@ in a consumer whose `envPrefix` is `ACME_`):
 The per-issue verify recipes behind `oddity.mjs verify` (`scripts/oddity-verify/<issue>.mjs`) and
 the tests that read a consumer's real archive, registry, inbox and workflow are consumer data and
 stay in the consumer.
+
+## Consumer values for base scripts
+
+`scripts/test-preflight.mjs` stops a test run that is out of inodes before it blames your code. Its message ends
+with a remedy, and only the consumer knows its own cache-cleanup command:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AGENT_TOOLING_TEST_CACHE_MAINTENANCE` | unset | The consumer's test-cache maintenance command, for example `npm run test-cache:maintenance -- --apply`. Set, the inode failure names it ("The test-cache maintenance command for this repository does exactly that safely: ..."); unset or blank, the message keeps the generic "if this repository has a test-cache maintenance command" sentence |
+
+It is an environment knob rather than an `agent-tooling.json` key because the shared config loader rejects unknown
+keys and is a byte copy from CICD. Set it where the consumer's test commands get their environment (the
+`env` block of `.claude/settings.json`, a CI step, a shell profile). The function API also takes
+`inodePreflightFailure({ maintenanceCommand })`, which wins over the variable.
 
 ## Adopting
 

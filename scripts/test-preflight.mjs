@@ -240,10 +240,26 @@ export function inodeUsage(dir, deps = {}) {
 }
 
 /**
+ * The consumer's own cache-cleanup command, from `options.maintenanceCommand` or the
+ * `AGENT_TOOLING_TEST_CACHE_MAINTENANCE` environment knob (the prefix is rewritten on sync).
+ * It is an env knob rather than an agent-tooling.json key because the config loader rejects
+ * unknown keys. Empty or whitespace reads as unset.
+ *
+ * @param {{ maintenanceCommand?: string, env?: Record<string, string | undefined> }} [options]
+ * @returns {string[]} the message lines that name the remedy
+ */
+export function maintenanceHint(options = {}) {
+  const env = options.env ?? process.env;
+  const named = String(options.maintenanceCommand ?? env.AGENT_TOOLING_TEST_CACHE_MAINTENANCE ?? '').trim();
+  if (named) return [`The test-cache maintenance command for this repository does exactly that safely: ${named}`];
+  return ['If this repository has a test-cache maintenance command, it does exactly that safely; run it.'];
+}
+
+/**
  * The message for a run that must not start, or null when there are enough
  * inodes (or the platform cannot say).
  *
- * @param {{ dirs?: string[], min?: number, tmpdir?: string, statfsSync?: Function, consumers?: (dir: string) => { name: string, count: number }[] }} [options]
+ * @param {{ dirs?: string[], min?: number, tmpdir?: string, statfsSync?: Function, consumers?: (dir: string) => { name: string, count: number }[], maintenanceCommand?: string, env?: Record<string, string | undefined> }} [options]
  * @returns {string | null}
  */
 export function inodePreflightFailure(options = {}) {
@@ -291,8 +307,8 @@ export function inodePreflightFailure(options = {}) {
     '',
     'Fix it — these are regenerable. Check for active test processes first, then',
     'remove ONLY these regenerable caches (jest_rs, node-compile-cache) plus your own scratch files older than a day,',
-    "and leave other sessions' scratchpads and everything else alone. If this repository has a",
-    'test-cache maintenance command, it does exactly that safely; run it.',
+    "and leave other sessions' scratchpads and everything else alone.",
+    ...maintenanceHint(options),
     '',
     'Then re-run. A cleared cache took one measured run from 1196 failed suites in 356s',
     'to 1245 suites / 19012 tests green in 28s.',
