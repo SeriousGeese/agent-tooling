@@ -480,7 +480,7 @@ const merged7 = {
 
 watched('no live watcher (none, stale, dead leader, PR not covered): the same direct reads as before', () => {
   // Above every OS's pid_max, so it can never be reused into a live process while the earlier
-  // cases run (a spawned-and-exited pid was, on a loaded Windows host: DnD-mvpmw).
+  // cases run (a spawned-and-exited pid was, on a loaded Windows host).
   const deadPid = 2 ** 31 - 1;
   for (const [label, setup] of [
     ['no state file', () => {}],
