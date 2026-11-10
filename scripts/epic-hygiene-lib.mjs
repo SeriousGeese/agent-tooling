@@ -158,15 +158,38 @@ export function isToggleCleanupBead(row) {
 }
 
 /**
+ * The standing epic that holds every toggle-cleanup bead while it waits on sign-off: an epic
+ * titled "Feature toggle cleanups …". A repository has at most one that is not closed.
+ *
+ * Without it, every toggled feature epic finished with one deferred cleanup child left, so
+ * it could not close clean, and each eviction then dropped that child at top level or into a
+ * one-off bucket: one tracker ended up with 39 cleanup beads scattered across top level and
+ * unrelated buckets. With a holder, eviction sends a cleanup child there instead (see
+ * planEpicEviction), and the holder is never closed, emptied or dated by this tool.
+ */
+export function isToggleCleanupHolder(row) {
+  return isEpicRow(row) && /^Feature toggle cleanups\b/i.test(String(row?.title ?? ''));
+}
+
+/** The toggle-cleanup holder that is not closed, or null. Lowest id wins if there are two. */
+export function findToggleCleanupHolder(rows) {
+  const holders = rows
+    .filter((r) => r.status !== 'closed' && isToggleCleanupHolder(r))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  return holders[0] ?? null;
+}
+
+/**
  * A hard-deferred bead with no date at all, parked forever, so the sweep backfills a date.
  *
  * A toggle-cleanup bead is the sanctioned exception: it is deferred WITHOUT a date on purpose.
  * bd 1.3 reopens a dated defer on any `bd ready` read once the date passes, which put cleanup
  * beads in front of agents as open work; a dateless
- * defer never wakes. Backfilling a date here would undo that.
+ * defer never wakes. Backfilling a date here would undo that. The holder epic that parks
+ * them is dateless for the same reason.
  */
 export function isDatelessDeferral(row) {
-  return row.status === 'deferred' && !row.defer_until && !isToggleCleanupBead(row);
+  return row.status === 'deferred' && !row.defer_until && !isToggleCleanupBead(row) && !isToggleCleanupHolder(row);
 }
 
 /**
@@ -385,42 +408,70 @@ export function planEpicEviction(epicId, rows, now, opts = {}) {
     };
   }
 
+  // The toggle-cleanup holder parks cleanup beads on purpose and never closes on its own:
+  // its children are all deferred by design, which is exactly the shape Rule 1b nominates.
+  // Plan nothing for it (a closed one, which a human closed deliberately, evicts as usual).
+  if (epic && isToggleCleanupHolder(epic) && epic.status !== 'closed') {
+    return { epicId, blockedBy, deferred, target, actions, toggleCleanupHolder: true };
+  }
+
   // Real work remains, nothing to plan, the epic must stay open.
   if (blockedBy.length > 0) return { epicId, blockedBy, deferred, target, actions };
   if (deferred.length === 0) return { epicId, blockedBy, deferred, target, actions };
+
+  const epicTitle = epic?.title ?? epicId;
+
+  // A toggle-cleanup child goes to the holder epic when there is one, with a relates-to edge
+  // back to the feature it came from, instead of top level or a one-off bucket. Everything
+  // else below runs on the REST of the deferred children.
+  const holder = findToggleCleanupHolder(rows);
+  const toHolder = holder ? deferred.filter((c) => isToggleCleanupBead(c)) : [];
+  const rest = deferred.filter((c) => !toHolder.includes(c));
+  for (const child of toHolder) {
+    actions.push({ kind: 'reparent', id: child.id, newParent: holder.id, why: `toggle-cleanup child of ${epicId}` });
+    actions.push({ kind: 'relate', id: child.id, to: epicId });
+    actions.push({
+      kind: 'note',
+      id: child.id,
+      text:
+        `Moved out of ${epicId} ("${epicTitle}") when that epic closed, to the toggle-cleanup ` +
+        `holder ${holder.id}, where it waits for sign-off. Related to ${epicId}.`,
+    });
+  }
 
   // The epic is ITSELF a previous eviction bucket. Its
   // children are already parked under it, closing it to mint a second bucket only
   // doubles the title suffix and churns ids. An OPEN bucket is deferred in place
   // (the settled parked state); a closed/already-deferred one, or one with a child
   // waking from an expired date (Rule 2 surfaces that child), needs nothing.
-  if (isEvictionBucket(epic)) {
-    const wakes = deferred.some((c) => isExpiredDeferral(c, now));
+  if (rest.length && isEvictionBucket(epic)) {
+    const wakes = rest.some((c) => isExpiredDeferral(c, now));
     if (epic.status === 'open' && !wakes) {
       actions.push({
         kind: 'defer-epic',
         id: epicId,
-        deferUntil: inheritedDeferDate(deferred, now) ?? deferDateFrom(now, defaultMonths),
+        deferUntil: inheritedDeferDate(rest, now) ?? deferDateFrom(now, defaultMonths),
         why: `already an eviction bucket ("${epic.title}") with all children parked — deferring in place rather than minting a second bucket`,
       });
     }
     return { epicId, blockedBy, deferred, target, actions };
   }
 
-  const epicTitle = epic?.title ?? epicId;
-
   // --split-standalone: the beads share a parent but nothing else, so a shared
   // follow-ups epic would be filing rather than grouping. Each moves out alone.
-  if (deferred.length === 1 || opts.splitStandalone) {
+  const standalone = rest.length === 1 || opts.splitStandalone;
+  if (rest.length === 0) {
+    // Everything went to the toggle-cleanup holder; nothing else to move.
+  } else if (standalone) {
     // A one-bead epic is pure ceremony, so a singleton always moves out alone.
     // No relates-to edge is needed on these: a moved CHILD keeps its hierarchical
     // id, which already names the origin epic structurally.
-    for (const child of deferred) {
+    for (const child of rest) {
       actions.push({
         kind: 'reparent',
         id: child.id,
         newParent: target,
-        why: deferred.length === 1 ? `sole deferred child of ${epicId}` : `deferred child of ${epicId} (split standalone)`,
+        why: rest.length === 1 ? `sole deferred child of ${epicId}` : `deferred child of ${epicId} (split standalone)`,
       });
       if (isDatelessDeferral(child)) {
         actions.push({ kind: 'set-defer', id: child.id, deferUntil: backfillDeferDate(child, now, defaultMonths) });
@@ -430,7 +481,7 @@ export function planEpicEviction(epicId, rows, now, opts = {}) {
         id: child.id,
         text:
           `Moved out of ${epicId} ("${epicTitle}") when that epic closed — it was ` +
-          `${deferred.length === 1 ? 'the only deferred item left' : 'deferred, and split out standalone'}. ` +
+          `${rest.length === 1 ? 'the only deferred item left' : 'deferred, and split out standalone'}. ` +
           `This bead's ID still names its origin epic.`,
       });
     }
@@ -439,8 +490,8 @@ export function planEpicEviction(epicId, rows, now, opts = {}) {
     // the same sweep. An epic holding live work is not deferred, so it is born
     // open, otherwise the sweep leaves a "deferred" epic with active children
     // under it, which is exactly the dishonest state the hygiene guidance forbids.
-    const wakes = deferred.some((c) => isExpiredDeferral(c, now));
-    const deferUntil = wakes ? null : inheritedDeferDate(deferred, now) ?? deferDateFrom(now, defaultMonths);
+    const wakes = rest.some((c) => isExpiredDeferral(c, now));
+    const deferUntil = wakes ? null : inheritedDeferDate(rest, now) ?? deferDateFrom(now, defaultMonths);
     const newEpicKey = `NEW_EPIC:${epicId}`;
     actions.push({
       kind: 'create-epic',
@@ -451,11 +502,11 @@ export function planEpicEviction(epicId, rows, now, opts = {}) {
       deferUntil,
       description:
         `Deferred follow-ups split out of ${epicId} ("${epicTitle}") so that epic could close clean.\n\n` +
-        `These ${deferred.length} beads were the only non-closed children left when ${epicId} finished; ` +
+        `These ${rest.length} beads were the only non-closed children left when ${epicId} finished; ` +
         `none of them blocked it. Each child's ID still names the origin epic.\n\n` +
-        `Children moved here: ${deferred.map((c) => c.id).join(', ')}`,
+        `Children moved here: ${rest.map((c) => c.id).join(', ')}`,
     });
-    for (const child of deferred) {
+    for (const child of rest) {
       actions.push({ kind: 'reparent', id: child.id, newParent: newEpicKey, why: `deferred child of ${epicId}` });
       if (isDatelessDeferral(child)) {
         actions.push({ kind: 'set-defer', id: child.id, deferUntil: backfillDeferDate(child, now, defaultMonths) });
@@ -472,9 +523,10 @@ export function planEpicEviction(epicId, rows, now, opts = {}) {
   }
 
   // Cross-link back from the origin, and only then close it.
-  const movedTo = deferred.length === 1 || opts.splitStandalone
-    ? deferred.map((c) => c.id).join(', ')
-    : `NEW_EPIC:${epicId}`;
+  const movedParts = [];
+  if (rest.length) movedParts.push(standalone ? rest.map((c) => c.id).join(', ') : `NEW_EPIC:${epicId}`);
+  if (toHolder.length) movedParts.push(`${holder.id} (toggle-cleanup holder)`);
+  const movedTo = movedParts.join(' and ');
   actions.push({
     kind: 'note',
     id: epicId,
