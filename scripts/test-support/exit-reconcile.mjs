@@ -13,9 +13,9 @@ import os from 'node:os';
 // AGENT_TOOLING_TEARDOWN_CRASH_EXIT_CODES (comma separated); an empty value disables the retry.
 export const DEFAULT_TEARDOWN_CRASH_EXIT_CODES = [3221225477];
 
-/** @param {string|undefined} raw */
+/** @param {string|null|undefined} raw */
 export function teardownCrashCodes(raw) {
-  if (raw === undefined) return DEFAULT_TEARDOWN_CRASH_EXIT_CODES;
+  if (raw === undefined || raw === null) return DEFAULT_TEARDOWN_CRASH_EXIT_CODES;
   return raw
     .split(',')
     .map((s) => Number(s.trim()))

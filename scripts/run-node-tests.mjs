@@ -164,7 +164,7 @@ if (first.startFailed) {
   if (code !== 0 && !signal) {
     const retryFiles = teardownCrashRetryFiles(
       summary,
-      teardownCrashCodes(process.env.AGENT_TOOLING_TEARDOWN_CRASH_EXIT_CODES),
+      teardownCrashCodes(process.env.AGENT_TOOLING_TEARDOWN_CRASH_EXIT_CODES ?? null),
     );
     if (retryFiles.length > 0) {
       const rule = '!'.repeat(78);
