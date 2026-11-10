@@ -344,5 +344,8 @@ Two knobs make the suites tolerate a loaded workstation without loosening CI:
   second crash, keeps it red. `AGENT_TOOLING_TEARDOWN_CRASH_EXIT_CODES` overrides the code list (empty
   disables it).
 
-`worktree-new.sh --await` also removes a `.git/index.lock` older than
-`AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES` (default 10; `0` disables), and says so.
+`worktree-new.sh --await` also looks at a `.git/index.lock` older than
+`AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES` (default 10; `0` disables). It deletes it, and says so, ONLY
+when `fuser` or `lsof` proves no process has it open (POSIX). On Windows, or with no prover, it never
+deletes: it prints a WARNING with the lock's age and the exact `rm -f` to run once you have checked no git
+is running there.

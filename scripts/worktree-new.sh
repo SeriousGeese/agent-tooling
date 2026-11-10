@@ -1290,17 +1290,43 @@ if [ "$AWAIT" = "1" ]; then
 
   # A stale `index.lock` is a worker's first gate failing for no visible reason: a killed git
   # process (or a hook racing a merge for the lock) leaves it behind, and every later `git add`
-  # then fails. A lock this old cannot belong to a live git operation, which holds it for
-  # seconds, so clear it and SAY so. `AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES=0` turns this off.
+  # then fails. AGE alone does not prove nobody holds it, and deleting a live lock can corrupt the
+  # index, so a lock older than the threshold is deleted ONLY when a prover says no process has it
+  # open: `fuser` or `lsof` on a POSIX host. Where ownership cannot be established (Windows, or no
+  # prover installed) the lock is REPORTED, never deleted, with the exact manual command.
+  # `AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES` is the age gate for reporting or deleting at all
+  # (default 10; 0 turns both off). `AGENT_TOOLING_ASSUME_POSIX_LOCKS=1` is for the tests: it lets a
+  # stub prover on PATH count on a Windows host.
   STALE_LOCK_MINUTES="${AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES:-10}"
   if [ "$STALE_LOCK_MINUTES" != "0" ] && [ -e "$AW/.git" ]; then
     AW_GIT_DIR="$(git -C "$AW" rev-parse --absolute-git-dir 2>/dev/null || true)"
-    if [ -n "$AW_GIT_DIR" ] && [ -f "$AW_GIT_DIR/index.lock" ] &&
-      [ -n "$(find "$AW_GIT_DIR/index.lock" -maxdepth 0 -mmin "+$STALE_LOCK_MINUTES" 2>/dev/null)" ]; then
-      if rm -f "$AW_GIT_DIR/index.lock" 2>/dev/null; then
-        echo "Cleared a stale git lock: $AW_GIT_DIR/index.lock was older than ${STALE_LOCK_MINUTES} minutes (a killed git process leaves one). Set AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES=0 to turn this off."
+    AW_LOCK_FILE="$AW_GIT_DIR/index.lock"
+    if [ -n "$AW_GIT_DIR" ] && [ -f "$AW_LOCK_FILE" ] &&
+      [ -n "$(find "$AW_LOCK_FILE" -maxdepth 0 -mmin "+$STALE_LOCK_MINUTES" 2>/dev/null)" ]; then
+      # held | free | unknown
+      AW_LOCK_OWNER=unknown
+      case "$(uname -s 2>/dev/null)" in
+        MINGW* | MSYS* | CYGWIN*) [ "${AGENT_TOOLING_ASSUME_POSIX_LOCKS:-0}" = "1" ] && AW_LOCK_OWNER=probe ;;
+        *) AW_LOCK_OWNER=probe ;;
+      esac
+      if [ "$AW_LOCK_OWNER" = "probe" ]; then
+        AW_LOCK_OWNER=unknown
+        if command -v fuser >/dev/null 2>&1; then
+          if fuser "$AW_LOCK_FILE" >/dev/null 2>&1; then AW_LOCK_OWNER=held; else AW_LOCK_OWNER=free; fi
+        elif command -v lsof >/dev/null 2>&1; then
+          if lsof -- "$AW_LOCK_FILE" >/dev/null 2>&1; then AW_LOCK_OWNER=held; else AW_LOCK_OWNER=free; fi
+        fi
+      fi
+      AW_LOCK_AGE="$(( ( $(date +%s) - $(stat -c %Y "$AW_LOCK_FILE" 2>/dev/null || echo "$(date +%s)") ) / 60 ))"
+      if [ "$AW_LOCK_OWNER" = "free" ] && rm -f "$AW_LOCK_FILE" 2>/dev/null; then
+        echo "Cleared a stale git lock: $AW_LOCK_FILE (about ${AW_LOCK_AGE} minutes old, and no process has it open). Set AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES=0 to turn this off."
       else
-        echo "WARNING: $AW_GIT_DIR/index.lock is older than ${STALE_LOCK_MINUTES} minutes and could not be removed; a git process may still hold it. git add will fail until it is gone." >&2
+        case "$AW_LOCK_OWNER" in
+          held) AW_LOCK_WHY="a process has it open" ;;
+          free) AW_LOCK_WHY="it could not be removed" ;;
+          *) AW_LOCK_WHY="this host cannot prove that no git process holds it" ;;
+        esac
+        echo "WARNING: stale git lock NOT removed: $AW_LOCK_FILE is about ${AW_LOCK_AGE} minutes old (older than ${STALE_LOCK_MINUTES}), and ${AW_LOCK_WHY}. git add fails until it is gone. Check that no git process is running in $AW, then:  rm -f \"$AW_LOCK_FILE\"" >&2
       fi
     fi
   fi
