@@ -19,13 +19,19 @@
 // The timer is unref'd: it never keeps a finished file alive. It changes nothing about a file that
 // finishes inside the budget.
 
+import { scaledMs } from './timeout-scale.mjs';
+
 export const DEFAULT_FILE_TIMEOUT_MS = 10 * 60_000;
 export const TAG = '[file-deadline]';
 
-/** The budget in ms from the environment, or the default; a value that is not a positive number is ignored. */
-export function fileTimeoutMs(env = process.env) {
+/**
+ * The budget in ms from the environment, or the default; a value that is not a positive number is
+ * ignored. An explicit value is used verbatim; the DEFAULT is scaled by the load-tolerance scale
+ * (timeout-scale.mjs), or the per-test budgets it widens would outlast the file that holds them.
+ */
+export function fileTimeoutMs(env = process.env, platform = process.platform) {
   const raw = Number(env.AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_FILE_TIMEOUT_MS;
+  return Number.isFinite(raw) && raw > 0 ? raw : scaledMs(DEFAULT_FILE_TIMEOUT_MS, env, platform);
 }
 
 /** The banner printed when the deadline fires. Pure, so it can be tested without waiting. */

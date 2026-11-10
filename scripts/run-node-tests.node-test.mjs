@@ -377,11 +377,17 @@ test('a test file that never finishes is exited at its deadline and named, and l
 
 test('fileTimeoutMs reads AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS and ignores a value that is not a positive number', async () => {
   const { DEFAULT_FILE_TIMEOUT_MS, fileTimeoutMs } = await import('./test-support/file-deadline.mjs');
-  assert.equal(fileTimeoutMs({}), DEFAULT_FILE_TIMEOUT_MS);
-  assert.equal(fileTimeoutMs({ AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS: '2500' }), 2500);
+  assert.equal(fileTimeoutMs({}, 'linux'), DEFAULT_FILE_TIMEOUT_MS);
+  assert.equal(fileTimeoutMs({ AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS: '2500' }, 'linux'), 2500);
   for (const bad of ['', '0', '-5', 'ten', 'Infinity']) {
-    assert.equal(fileTimeoutMs({ AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS: bad }), DEFAULT_FILE_TIMEOUT_MS, `"${bad}"`);
+    assert.equal(fileTimeoutMs({ AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS: bad }, 'linux'), DEFAULT_FILE_TIMEOUT_MS, `"${bad}"`);
   }
+  // The default follows the load-tolerance scale (so it outlasts the per-test budgets it widens);
+  // an explicit value is verbatim, and CI stays at the unscaled default.
+  assert.equal(fileTimeoutMs({}, 'win32'), DEFAULT_FILE_TIMEOUT_MS * 3);
+  assert.equal(fileTimeoutMs({ CI: 'true' }, 'win32'), DEFAULT_FILE_TIMEOUT_MS);
+  assert.equal(fileTimeoutMs({ AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS: '2500' }, 'win32'), 2500);
+  assert.equal(fileTimeoutMs({ AGENT_TOOLING_NODE_TEST_TIMEOUT_SCALE: '2' }, 'linux'), DEFAULT_FILE_TIMEOUT_MS * 2);
   // The default must leave room under the CI job's 45-minute cap, and far above a healthy file.
   assert.ok(DEFAULT_FILE_TIMEOUT_MS >= 5 * 60_000 && DEFAULT_FILE_TIMEOUT_MS <= 15 * 60_000);
 });
