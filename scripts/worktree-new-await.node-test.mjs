@@ -113,21 +113,65 @@ test('--await succeeds when node_modules is genuinely in sync and no install is 
   }
 });
 
-test('--await clears an index.lock older than the threshold and says so, and keeps a fresh one', async () => {
-  const f = fixture();
+// A stub `fuser` first on PATH, exiting `code` (0 = a process has the file open, 1 = none).
+// ASSUME_POSIX_LOCKS lets the stub count on a Windows host, where no prover is trusted by default.
+function lockProverEnv(root, code) {
+  const bin = path.join(root, `prover-${code}`);
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(path.join(bin, 'fuser'), `#!/bin/sh\nexit ${code}\n`);
+  chmodSync(path.join(bin, 'fuser'), 0o755);
+  return { ...withBinFirst(ENV, toBashPath(bin)), AGENT_TOOLING_ASSUME_POSIX_LOCKS: '1' };
+}
+
+function oldLock(f) {
   const lock = path.join(f.primary, '.git', 'index.lock');
+  writeFileSync(lock, '');
+  const old = new Date(Date.now() - 60 * 60_000);
+  utimesSync(lock, old, old);
+  return lock;
+}
+
+test('--await removes an old index.lock ONLY when a prover says no process has it open, and keeps a fresh one', async () => {
+  const f = fixture();
   try {
-    writeFileSync(lock, '');
-    const old = new Date(Date.now() - 60 * 60_000);
-    utimesSync(lock, old, old);
-    const stale = await run(f.primary, ['--await', toBashPath(f.primary)]);
+    const lock = oldLock(f);
+    const stale = await run(f.primary, ['--await', toBashPath(f.primary)], lockProverEnv(f.root, 1));
     assert.match(stale.stdout, /Cleared a stale git lock/);
     assert.equal(existsSync(lock), false);
 
     writeFileSync(lock, '');
-    const fresh = await run(f.primary, ['--await', toBashPath(f.primary)]);
+    const fresh = await run(f.primary, ['--await', toBashPath(f.primary)], lockProverEnv(f.root, 1));
     assert.doesNotMatch(fresh.stdout, /Cleared a stale git lock/);
     assert.equal(existsSync(lock), true, 'a fresh lock may belong to a live git process');
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
+test('--await keeps an old index.lock a prover says is HELD, and warns', async () => {
+  const f = fixture();
+  try {
+    const lock = oldLock(f);
+    const r = await run(f.primary, ['--await', toBashPath(f.primary)], lockProverEnv(f.root, 0));
+    assert.equal(existsSync(lock), true);
+    assert.match(r.stderr, /stale git lock NOT removed/);
+    assert.match(r.stderr, /a process has it open/);
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
+test('--await reports, and never deletes, an old index.lock when ownership cannot be proven', async () => {
+  const f = fixture();
+  try {
+    const lock = oldLock(f);
+    // No prover: a Windows host, or one with neither fuser nor lsof, cannot establish ownership.
+    const r = await run(f.primary, ['--await', toBashPath(f.primary)], { ...ENV, AGENT_TOOLING_LOCK_PROVER: 'none' });
+    assert.equal(existsSync(lock), true, 'unproven ownership is never deleted');
+    assert.match(r.stderr, /stale git lock NOT removed/);
+    assert.match(r.stderr, /rm -f /);
+    assert.match(r.stderr, /index\.lock/);
+    assert.match(r.stderr, /minutes old/);
   } finally {
     removeTempDir(f.root, 'worktree-new.node-test');
   }
