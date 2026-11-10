@@ -33,9 +33,12 @@
 //     decides: one quiet line when the failure is attributable to a reported
 //     test, and a loud UNATTRIBUTED banner when it is not.
 //
-// It never changes the exit code. Whatever the runner exited with is what this
+// It never rewrites a failure into another failure. Whatever the runner exited with is what this
 // script exits with; a signal death becomes 128+signo. Masking a failure here
-// would defeat the entire point of the gate.
+// would defeat the entire point of the gate. The ONE exception is narrow and loud: a test file
+// whose subtests all passed but whose child died at exit with a native crash code (0xC0000005,
+// see test-support/exit-reconcile.mjs) is re-run once on its own, with a banner; a second crash
+// or any real failure anywhere in the run keeps the run red.
 //
 // Usage: node scripts/run-node-tests.mjs <label> <test file or glob>...
 
@@ -46,7 +49,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { bashResolutionPlan, inodePreflightFailure, withBashPlanApplied } from './test-preflight.mjs';
-import { reconcileExit } from './test-support/exit-reconcile.mjs';
+import { reconcileExit, teardownCrashCodes, teardownCrashRetryFiles } from './test-support/exit-reconcile.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIAGNOSTICS = path.join(HERE, 'test-support', 'async-failure-diagnostics.mjs');
@@ -120,35 +123,72 @@ if (bashPlan.status === 'prepend') {
   console.error(`[${label}] ${bashPlan.message}`);
 }
 
-const child = spawn(
-  process.execPath,
-  [
-    '--import',
-    pathToFileURL(DIAGNOSTICS).href,
-    '--import',
-    pathToFileURL(FILE_DEADLINE).href,
-    '--test',
-    '--test-reporter',
-    humanReporter,
-    '--test-reporter-destination',
-    'stdout',
-    '--test-reporter',
-    pathToFileURL(SUMMARY_REPORTER).href,
-    '--test-reporter-destination',
-    summaryFile,
-    ...testArgs,
-  ],
-  { stdio: 'inherit', env: childEnv },
-);
+const baseArgs = [
+  '--import',
+  pathToFileURL(DIAGNOSTICS).href,
+  '--import',
+  pathToFileURL(FILE_DEADLINE).href,
+  '--test',
+  '--test-reporter',
+  humanReporter,
+  '--test-reporter-destination',
+  'stdout',
+  '--test-reporter',
+  pathToFileURL(SUMMARY_REPORTER).href,
+  '--test-reporter-destination',
+];
 
-child.on('error', (err) => {
-  console.error(`\n[${label}] FAILED TO START the test runner: ${err.stack ?? err}`);
+/** One `node --test` run; resolves with how it ended. The summary reporter writes to `dest`. */
+function runOnce(files, dest) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [...baseArgs, dest, ...files], { stdio: 'inherit', env: childEnv });
+    child.on('error', (err) => {
+      console.error(`\n[${label}] FAILED TO START the test runner: ${err.stack ?? err}`);
+      resolve({ startFailed: true });
+    });
+    child.on('close', (code, signal) => resolve({ code, signal }));
+  });
+}
+
+const first = await runOnce(testArgs, summaryFile);
+if (first.startFailed) {
   cleanup();
   process.exitCode = 1;
-});
+} else {
+  let { code, signal } = first;
+  let summary = readSummaryFrom(summaryFile);
 
-child.on('close', (code, signal) => {
-  const summary = readSummary();
+  // A file whose subtests ALL passed but whose child then died with a native crash code at exit
+  // (0xC0000005 under load on Windows) is retried ONCE, loudly, and only that file. Any other
+  // failure in the run, or a second crash, keeps the failing verdict: CI stays strict.
+  if (code !== 0 && !signal) {
+    const retryFiles = teardownCrashRetryFiles(
+      summary,
+      teardownCrashCodes(process.env.AGENT_TOOLING_TEARDOWN_CRASH_EXIT_CODES),
+    );
+    if (retryFiles.length > 0) {
+      const rule = '!'.repeat(78);
+      console.error(
+        `\n${rule}\n[${label}] TEARDOWN CRASH RETRY: exit ${code} (0x${(code >>> 0).toString(16).toUpperCase()}) after every subtest passed in:\n` +
+          retryFiles.map((f) => `    ${f}`).join('\n') +
+          `\n  A native crash at process exit is not an assertion. Re-running ONLY those files once.` +
+          `\n  If they crash or fail again the run FAILS.\n${rule}\n`,
+      );
+      const retrySummaryFile = path.join(summaryDir, 'summary-retry.json');
+      const retry = await runOnce(retryFiles, retrySummaryFile);
+      if (!retry.startFailed) {
+        if (retry.code === 0 && !retry.signal) {
+          console.error(`[${label}] teardown crash retry PASSED for ${retryFiles.length} file(s): the first run's crash was transient.`);
+        } else {
+          console.error(`[${label}] teardown crash retry FAILED again (exit ${retry.code ?? retry.signal}); reporting the failure.`);
+        }
+        code = retry.code;
+        signal = retry.signal;
+        summary = readSummaryFrom(retrySummaryFile);
+      }
+    }
+  }
+
   cleanup();
   const { exitCode, message } = reconcileExit({ label, code, signal, summary });
   if (message) console.error(message);
@@ -156,11 +196,11 @@ child.on('close', (code, signal) => {
   // of this script, and process.exit() can truncate a pending write to a piped
   // stderr. Nothing else is keeping the loop alive, so this exits immediately.
   process.exitCode = exitCode;
-});
+}
 
-function readSummary() {
+function readSummaryFrom(file) {
   try {
-    const raw = fs.readFileSync(summaryFile, 'utf8').trim();
+    const raw = fs.readFileSync(file, 'utf8').trim();
     return raw ? JSON.parse(raw) : null;
   } catch {
     // An unreadable summary is itself a signal, and reconcileExit says so.

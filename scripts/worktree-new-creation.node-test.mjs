@@ -18,6 +18,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { removeTempDir } from './test-support/cleanup.mjs';
+import { scaledMs } from './test-support/timeout-scale.mjs';
 import {
   git,
   fixture,
@@ -102,7 +103,7 @@ function creationMarkerPath(dest) {
 // the child has PROVEN, via its own stdout, not a guess about its timing,
 // that it is actually waiting on it, and replace the elapsed-time assertion
 // with an assertion on the ORDER the three output lines happen to appear in.
-test('--await waits out an in-progress creation marker, then proceeds once it clears', { timeout: 120_000 }, async () => {
+test('--await waits out an in-progress creation marker, then proceeds once it clears', { timeout: scaledMs(120_000) }, async () => {
   const f = fixture();
   const target = path.join(f.root, 'target-creating');
   mkdirSync(target, { recursive: true });

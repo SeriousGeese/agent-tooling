@@ -44,6 +44,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { windowsPowerShellEnv } from './lib/windows-powershell-env.mjs';
 import { removeTempDir } from './test-support/cleanup.mjs';
+import { scaledMs } from './test-support/timeout-scale.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(REPO_ROOT, 'scripts', 'worktree-dev.sh');
@@ -122,7 +123,7 @@ function runScript(bash, sandboxDir, args, opts = {}) {
   let r;
   try {
     r = spawnSync(bash, ['scripts/worktree-dev.sh', ...args], {
-      cwd: sandboxDir, env: scriptEnv(opts), timeout: 60_000, stdio: ['ignore', outFd, errFd],
+      cwd: sandboxDir, env: scriptEnv(opts), timeout: scaledMs(60_000), stdio: ['ignore', outFd, errFd],
     });
   } finally {
     fs.closeSync(outFd);
@@ -183,7 +184,7 @@ function windowsDiagnostics(bash, sandbox, serverPid) {
   ].join('\n'));
   const r = spawnSync(bash, [slashed(script)], {
     env: scriptEnv({ extra: { REG: slashed(sandbox.registry), SERVER_PID: String(serverPid) } }),
-    encoding: 'utf8', timeout: 60_000,
+    encoding: 'utf8', timeout: scaledMs(60_000),
   });
   return `\n=== win32 diagnostics ===\n${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? `\n${r.error}` : ''}`;
 }

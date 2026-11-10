@@ -7,6 +7,44 @@
 
 import os from 'node:os';
 
+// A native crash at process exit, after every subtest passed. 0xC0000005 is a Windows access
+// violation (a native addon such as better-sqlite3 tearing down under load); it is not an
+// assertion, and the same file passes on the next run. Override the list with
+// AGENT_TOOLING_TEARDOWN_CRASH_EXIT_CODES (comma separated); an empty value disables the retry.
+export const DEFAULT_TEARDOWN_CRASH_EXIT_CODES = [3221225477];
+
+/** @param {string|undefined} raw */
+export function teardownCrashCodes(raw) {
+  if (raw === undefined) return DEFAULT_TEARDOWN_CRASH_EXIT_CODES;
+  return raw
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n !== 0);
+}
+
+/**
+ * The files to retry, or [] when this failure is anything other than "only teardown crashes".
+ * Strict on purpose: every failing file must be a file-level failure carrying one of `codes`, with
+ * ZERO failing subtests of its own, and the run must have no other failure. One real failure
+ * anywhere means no retry at all.
+ *
+ * @param {object|null} summary  Parsed summary-reporter JSON.
+ * @param {number[]} codes
+ * @returns {string[]}
+ */
+export function teardownCrashRetryFiles(summary, codes) {
+  if (!summary || codes.length === 0) return [];
+  const failedFiles = summary.failedFiles ?? [];
+  if (failedFiles.length === 0) return [];
+  const exits = summary.fileExitCodes ?? {};
+  const subtests = summary.failedSubtestsByFile ?? {};
+  const eligible = failedFiles.every((f) => codes.includes(exits[f]) && !subtests[f]);
+  if (!eligible) return [];
+  // The runner's own failed count is files + subtests; anything beyond the crashed files is real.
+  if (typeof summary.counts?.failed === 'number' && summary.counts.failed > failedFiles.length) return [];
+  return [...failedFiles];
+}
+
 /**
  * @param {object} input
  * @param {string} input.label            Human name for the gate, e.g. 'test:scripts'.

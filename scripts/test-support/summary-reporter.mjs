@@ -10,6 +10,8 @@
 // It emits exactly one line of JSON and nothing else. It never writes to
 // stdout and never influences the run's outcome.
 
+import path from 'node:path';
+
 /**
  * @param {AsyncIterable<{type: string, data: any}>} source
  */
@@ -18,12 +20,27 @@ export default async function* summaryReporter(source) {
   let rootSummary = null;
   let sawAnySummary = false;
   const failedFiles = new Set();
+  // A file whose child process EXITED NONZERO is reported as one file-level failure (named after the
+  // file, carrying the child's exitCode) beside any failing subtests. The wrapper uses these two
+  // maps to tell "every subtest passed, then the process crashed at teardown" from a real failure.
+  const fileExitCodes = {};
+  const failedSubtestsByFile = {};
   const diagnostics = [];
 
   for await (const event of source) {
     if (event.type === 'test:fail') {
       const file = event.data?.file;
       if (file) failedFiles.add(file);
+      if (file) {
+        // The file-level failure is named after the file: as typed on the command line, so a
+        // relative name resolves against the cwd the runner shares with this reporter.
+        const name = event.data?.name;
+        const isFileLevel =
+          event.data?.nesting === 0 && typeof name === 'string' && path.resolve(name) === path.resolve(file);
+        const exitCode = event.data?.details?.error?.exitCode;
+        if (isFileLevel && typeof exitCode === 'number') fileExitCodes[file] = exitCode;
+        else if (!isFileLevel) failedSubtestsByFile[file] = (failedSubtestsByFile[file] ?? 0) + 1;
+      }
     } else if (event.type === 'test:summary') {
       sawAnySummary = true;
       // The root summary is the one with no `file` — it covers the whole run.
@@ -45,6 +62,8 @@ export default async function* summaryReporter(source) {
     counts: rootSummary?.counts ?? null,
     success: rootSummary?.success ?? null,
     failedFiles: [...failedFiles],
+    fileExitCodes,
+    failedSubtestsByFile,
     diagnostics,
   })}\n`;
 }

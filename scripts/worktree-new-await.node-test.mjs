@@ -16,10 +16,12 @@ import {
   existsSync,
   statSync,
   chmodSync,
+  utimesSync,
 } from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { removeTempDir } from './test-support/cleanup.mjs';
+import { scaledMs } from './test-support/timeout-scale.mjs';
 import {
   execFileAsync,
   script,
@@ -111,6 +113,40 @@ test('--await succeeds when node_modules is genuinely in sync and no install is 
   }
 });
 
+test('--await clears an index.lock older than the threshold and says so, and keeps a fresh one', async () => {
+  const f = fixture();
+  const lock = path.join(f.primary, '.git', 'index.lock');
+  try {
+    writeFileSync(lock, '');
+    const old = new Date(Date.now() - 60 * 60_000);
+    utimesSync(lock, old, old);
+    const stale = await run(f.primary, ['--await', toBashPath(f.primary)]);
+    assert.match(stale.stdout, /Cleared a stale git lock/);
+    assert.equal(existsSync(lock), false);
+
+    writeFileSync(lock, '');
+    const fresh = await run(f.primary, ['--await', toBashPath(f.primary)]);
+    assert.doesNotMatch(fresh.stdout, /Cleared a stale git lock/);
+    assert.equal(existsSync(lock), true, 'a fresh lock may belong to a live git process');
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
+test('--await leaves an old index.lock alone when AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES=0', async () => {
+  const f = fixture();
+  const lock = path.join(f.primary, '.git', 'index.lock');
+  try {
+    writeFileSync(lock, '');
+    const old = new Date(Date.now() - 60 * 60_000);
+    utimesSync(lock, old, old);
+    await run(f.primary, ['--await', toBashPath(f.primary)], { ...ENV, AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES: '0' });
+    assert.equal(existsSync(lock), true);
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
 test('--await exits 0 when there is no package-lock.json at all (--no-install case)', async () => {
   const f = fixture();
   const target = path.join(f.root, 'target-noinstall');
@@ -138,7 +174,7 @@ test('--install skips a genuinely up-to-date node_modules without shelling out t
   }
 });
 
-test('background install escapes the caller process group when setsid is available', { timeout: 15_000 }, async (t) => {
+test('background install escapes the caller process group when setsid is available', { timeout: scaledMs(15_000) }, async (t) => {
   try {
     execFileSync('bash', ['-c', 'command -v setsid'], { encoding: 'utf8', env: ENV, stdio: 'ignore' });
   } catch {
@@ -244,7 +280,7 @@ async function backgroundedPid(seconds) {
 // stdout), then is killed to let the run finish. That makes the pass/fail
 // outcome independent of scheduling: a loaded box just takes longer to reach
 // the same, deterministic proof.
-test('--await emits a heartbeat while waiting on a live pid', { timeout: 120_000 }, async () => {
+test('--await emits a heartbeat while waiting on a live pid', { timeout: scaledMs(120_000) }, async () => {
   const f = fixture();
   const target = path.join(f.root, 'target-heartbeat');
   mkdirSync(target, { recursive: true });

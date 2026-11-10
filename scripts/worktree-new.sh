@@ -1288,6 +1288,23 @@ if [ "$AWAIT" = "1" ]; then
     echo "Worktree creation finished in $AW."
   fi
 
+  # A stale `index.lock` is a worker's first gate failing for no visible reason: a killed git
+  # process (or a hook racing a merge for the lock) leaves it behind, and every later `git add`
+  # then fails. A lock this old cannot belong to a live git operation, which holds it for
+  # seconds, so clear it and SAY so. `AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES=0` turns this off.
+  STALE_LOCK_MINUTES="${AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES:-10}"
+  if [ "$STALE_LOCK_MINUTES" != "0" ] && [ -e "$AW/.git" ]; then
+    AW_GIT_DIR="$(git -C "$AW" rev-parse --absolute-git-dir 2>/dev/null || true)"
+    if [ -n "$AW_GIT_DIR" ] && [ -f "$AW_GIT_DIR/index.lock" ] &&
+      [ -n "$(find "$AW_GIT_DIR/index.lock" -maxdepth 0 -mmin "+$STALE_LOCK_MINUTES" 2>/dev/null)" ]; then
+      if rm -f "$AW_GIT_DIR/index.lock" 2>/dev/null; then
+        echo "Cleared a stale git lock: $AW_GIT_DIR/index.lock was older than ${STALE_LOCK_MINUTES} minutes (a killed git process leaves one). Set AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES=0 to turn this off."
+      else
+        echo "WARNING: $AW_GIT_DIR/index.lock is older than ${STALE_LOCK_MINUTES} minutes and could not be removed; a git process may still hold it. git add will fail until it is gone." >&2
+      fi
+    fi
+  fi
+
   # Whether or not we waited above: a worktree that EXISTS but has an empty index
   # is a checkout that did not complete, and every question below ("is there a pid
   # file", "does node_modules match the lockfile") is meaningless against a tree
@@ -1317,7 +1334,9 @@ if [ "$AWAIT" = "1" ]; then
     fi
     if deps_stale "$AW"; then
       echo "ERROR: no install is running in $AW, and node_modules is missing or stale against $AW_LOCK." >&2
-      echo "  Running a gate now would silently resolve modules against a DIFFERENT checkout. Fix:" >&2
+      echo "  Nothing started one: a worktree an agent harness created is only provisioned if its" >&2
+      echo "  SessionStart hook ran there. Running a gate now would silently resolve modules against" >&2
+      echo "  a DIFFERENT checkout. Fix (start the install, then --await again):" >&2
       echo "    $(agent_cmd install "path=$AW")" >&2
       exit 1
     fi
