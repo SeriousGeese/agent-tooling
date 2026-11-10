@@ -63,7 +63,8 @@ beads keep their own defaults (see the next section).
 These are mandated or automated, and the rule above does not touch them. The repository's rulebook
 lists its own; typical members:
 
-- the cleanup child of every new feature toggle, deferred at creation;
+- the cleanup bead of every new feature toggle, deferred at creation (under the repository's
+  toggle-cleanup holder epic when it has one, related to the feature epic);
 - release-train verify items;
 - tooling-friction beads, deduped against open ones;
 - the beads an automated filer opens for a red pipeline or a flaky test;

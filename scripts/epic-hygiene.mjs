@@ -249,6 +249,15 @@ function main(argv) {
       return;
     }
 
+    // The toggle-cleanup holder parks cleanup beads until sign-off; it is never closed or emptied here.
+    if (plan.toggleCleanupHolder) {
+      process.stdout.write(
+        `${epicId} is the toggle-cleanup holder epic: it parks ${plan.deferred.length} cleanup bead(s) ` +
+        `until sign-off, so this tool plans nothing for it.\n`,
+      );
+      return;
+    }
+
     if (plan.blockedBy.length) {
       process.stdout.write(
         `${epicId} CANNOT close — ${plan.blockedBy.length} non-deferred child(ren) still live:\n` +

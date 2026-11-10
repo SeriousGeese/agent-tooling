@@ -401,7 +401,12 @@ toggle") somewhere in the tracker, deferred until product sign-off.
    under the toggle's broader feature epic, some are standalone). Use `bd
    search "<toggle-name>"` and grep the results for "cleanup"/"remove...
    toggle" instead of a strict parent-child check, or you'll get false
-   negatives.
+   negatives. **If the repository has a toggle-cleanup holder epic** (an epic titled
+   "Feature toggle cleanups …", deferred with no date), every cleanup bead whose feature
+   epic has closed belongs under it: reparent a stray one with
+   `bd update <id> --parent <holder>` and `bd dep relate <id> <its feature epic>`.
+   `epic-hygiene.mjs` already routes cleanup children there when a feature epic closes, and
+   never closes, empties or dates the holder.
 4. A missing cleanup bead is only a real gap for a **staged rollout**
    toggle (created OFF, meant to flip ON after sign-off, per policy). A
    toggle that's a deliberate, product-approved **permanent kill-switch**
@@ -410,8 +415,9 @@ toggle") somewhere in the tracker, deferred until product sign-off.
    default-OFF policy") does NOT need a cleanup bead; it's meant to stay
    forever. Don't manufacture a cleanup bead for those.
 5. File a cleanup bead for each real gap: `bd create "Cleanup: remove
-   <name> feature toggle" --type task -p 3 --parent <beadRef> --acceptance
-   "..."`, then `bd update <id> --status deferred`. **No `--defer` date**:
+   <name> feature toggle" --type task -p 3 --parent <holder, or beadRef when the
+   repository has no holder> --acceptance "..."`, then `bd update <id> --status deferred`
+   (and `bd dep relate <id> <beadRef>` when it went under the holder). **No `--defer` date**:
    bd 1.3 reopens a dated defer on any `bd ready` once the date passes, which
    puts a cleanup bead in front of agents as open work. A dateless defer
    never wakes, and `epic-hygiene.mjs` deliberately does not backfill one for

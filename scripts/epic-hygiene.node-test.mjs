@@ -12,7 +12,9 @@ import {
   backfillDeferDate,
   deferDateFrom,
   filterActionKinds,
+  findToggleCleanupHolder,
   isDatelessDeferral,
+  isToggleCleanupHolder,
   isDeferred,
   isToggleCleanupBead,
   describeNonEpicParent,
@@ -176,6 +178,78 @@ test('a dateless toggle-cleanup bead is the sanctioned icebox: never dateless-fl
   const setDefers = sweepActions(sweep).filter((a) => a.kind === 'set-defer').map((a) => a.id);
   assert.ok(!setDefers.includes('C'), 'the tracker-wide sweep leaves it dateless');
   assert.ok(!setDefers.includes('E.1'), 'an eviction moves it without dating it');
+});
+
+// ── The toggle-cleanup holder: one standing epic that parks every cleanup bead ──
+
+const HOLDER = (over = {}) =>
+  issue('H', { issue_type: 'epic', status: 'deferred', title: 'Feature toggle cleanups (awaiting sign-off)', ...over });
+
+test('the holder epic is recognised by title, and only as an epic', () => {
+  assert.equal(isToggleCleanupHolder(HOLDER()), true);
+  assert.equal(isToggleCleanupHolder(HOLDER({ issue_type: 'task' })), false);
+  assert.equal(isToggleCleanupHolder(issue('x', { issue_type: 'epic', title: 'Toggle launch readiness' })), false);
+  assert.equal(findToggleCleanupHolder([HOLDER({ status: 'closed' })]), null, 'a closed holder is not a target');
+  assert.equal(findToggleCleanupHolder([issue('a'), HOLDER()])?.id, 'H');
+});
+
+test('a dateless deferred holder is never dateless-flagged, and the sweep never closes or empties it', () => {
+  const rows = [
+    HOLDER(),
+    childOf('C1', 'H', { status: 'deferred', title: 'Cleanup: remove spells feature toggle' }),
+    childOf('C2', 'H', { status: 'deferred', title: 'Cleanup: remove hex-grid feature toggle' }),
+  ];
+  assert.equal(isDatelessDeferral(rows[0]), false);
+  const sweep = planFullSweep(rows, NOW);
+  assert.deepEqual(sweepActions(sweep), [], 'nothing to do for a parked holder');
+
+  // Even if someone flips it open, Rule 1b must not close it and scatter its children.
+  const open = [HOLDER({ status: 'open' }), ...rows.slice(1)];
+  assert.deepEqual(sweepActions(planFullSweep(open, NOW)), []);
+  const plan = planEpicEviction('H', open, NOW);
+  assert.equal(plan.toggleCleanupHolder, true);
+  assert.deepEqual(plan.actions, []);
+});
+
+test('closing a feature epic sends its toggle-cleanup child to the holder, related back, undated', () => {
+  const rows = [
+    HOLDER(),
+    issue('F', { issue_type: 'epic', title: 'Multiclass' }),
+    childOf('F.1', 'F', { status: 'closed' }),
+    childOf('F.9', 'F', { status: 'deferred', title: 'Cleanup: remove multiclass feature toggle' }),
+  ];
+  const plan = planEpicEviction('F', rows, NOW);
+  const kinds = plan.actions.map((a) => `${a.kind}:${a.id}`);
+  assert.deepEqual(kinds, ['reparent:F.9', 'relate:F.9', 'note:F.9', 'note:F', 'close-epic:F']);
+  assert.equal(plan.actions[0].newParent, 'H');
+  assert.equal(plan.actions[1].to, 'F');
+  assert.ok(!plan.actions.some((a) => a.kind === 'set-defer'), 'the cleanup bead stays dateless');
+  assert.ok(!plan.actions.some((a) => a.kind === 'create-epic'), 'no bucket for a lone cleanup bead');
+  assert.match(plan.actions.find((a) => a.kind === 'close-epic').reason, /H \(toggle-cleanup holder\)/);
+});
+
+test('a mixed eviction splits: cleanup beads to the holder, the rest by the usual recipe', () => {
+  const rows = [
+    HOLDER(),
+    issue('F', { issue_type: 'epic', title: 'Feature' }),
+    childOf('F.8', 'F', { status: 'deferred', defer_until: '2027-01-01T00:00:00Z' }),
+    childOf('F.9', 'F', { status: 'deferred', title: 'Cleanup: remove the-feature feature toggle' }),
+  ];
+  const plan = planEpicEviction('F', rows, NOW);
+  const reparents = plan.actions.filter((a) => a.kind === 'reparent').map((a) => `${a.id}->${a.newParent}`);
+  assert.deepEqual(reparents, ['F.9->H', 'F.8->null']);
+  const close = plan.actions.find((a) => a.kind === 'close-epic');
+  assert.match(close.reason, /F\.8 and H \(toggle-cleanup holder\)/);
+});
+
+test('with no holder, a toggle-cleanup child evicts exactly as before', () => {
+  const rows = [
+    issue('F', { issue_type: 'epic', title: 'Feature' }),
+    childOf('F.9', 'F', { status: 'deferred', title: 'Cleanup: remove the-feature feature toggle' }),
+  ];
+  const plan = planEpicEviction('F', rows, NOW);
+  assert.deepEqual(plan.actions.map((a) => a.kind), ['reparent', 'note', 'note', 'close-epic']);
+  assert.equal(plan.actions[0].newParent, null);
 });
 
 test('deferDateFrom adds months and rolls the year over', () => {
