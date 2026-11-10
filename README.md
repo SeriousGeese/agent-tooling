@@ -333,3 +333,16 @@ node scripts/run-node-tests.mjs agent-tooling "scripts/**/*.node-test.mjs" "test
 ```
 
 CI runs the same command on Linux and Windows.
+
+Two knobs make the suites tolerate a loaded workstation without loosening CI:
+
+- `AGENT_TOOLING_NODE_TEST_TIMEOUT_SCALE` multiplies the wall-clock budgets of the tests that spawn
+  bash, git and dev servers (`scripts/test-support/timeout-scale.mjs`). Unset, it is 1 under `CI` and 3
+  on a local Windows host.
+- `run-node-tests.mjs` re-runs ONCE, loudly, a test file whose subtests all passed but whose child
+  exited with a native teardown crash (`0xC0000005`, 3221225477). Any real failure in the run, or a
+  second crash, keeps it red. `AGENT_TOOLING_TEARDOWN_CRASH_EXIT_CODES` overrides the code list (empty
+  disables it).
+
+`worktree-new.sh --await` also removes a `.git/index.lock` older than
+`AGENT_TOOLING_STALE_INDEX_LOCK_MINUTES` (default 10; `0` disables), and says so.

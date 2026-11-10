@@ -26,7 +26,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, test } from 'node:test';
 
-import { reconcileExit } from './test-support/exit-reconcile.mjs';
+import { reconcileExit, teardownCrashCodes, teardownCrashRetryFiles } from './test-support/exit-reconcile.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
@@ -109,6 +109,97 @@ test('reconcileExit fails a clean exit that ran zero tests (a glob that matched 
 test('the runner exits nonzero end to end when its glob matches nothing', () => {
   const r = spawnSync(process.execPath, [WRAPPER, 'zero-match', 'no-such-dir/**/*.node-test.mjs'], { encoding: 'utf8' });
   assert.notEqual(r.status, 0, `${r.stdout}${r.stderr}`);
+});
+
+// runWrapper drops stderr on a clean exit; the retry banner lives there.
+function runWrapperWithStderr(args, cwd, extraEnv = {}) {
+  const env = { ...process.env, ...extraEnv };
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync(process.execPath, [WRAPPER, ...args], { cwd, env, encoding: 'utf8', timeout: 120_000 });
+  return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+}
+
+const CRASH = 3221225477;
+const crashSummary = (over = {}) => ({
+  sawAnySummary: true,
+  counts: { tests: 3, passed: 2, failed: 1 },
+  failedFiles: ['/t/a.node-test.mjs'],
+  fileExitCodes: { '/t/a.node-test.mjs': CRASH },
+  failedSubtestsByFile: {},
+  ...over,
+});
+
+test('teardownCrashRetryFiles retries only a file that crashed at exit with every subtest green', () => {
+  assert.deepEqual(teardownCrashRetryFiles(crashSummary(), [CRASH]), ['/t/a.node-test.mjs']);
+});
+
+test('teardownCrashRetryFiles refuses when anything else failed (CI stays strict)', () => {
+  assert.deepEqual(teardownCrashRetryFiles(crashSummary({ failedSubtestsByFile: { '/t/a.node-test.mjs': 1 } }), [CRASH]), []);
+  assert.deepEqual(teardownCrashRetryFiles(crashSummary({ counts: { failed: 2 } }), [CRASH]), []);
+  assert.deepEqual(teardownCrashRetryFiles(crashSummary({ fileExitCodes: { '/t/a.node-test.mjs': 1 } }), [CRASH]), []);
+  assert.deepEqual(
+    teardownCrashRetryFiles(crashSummary({ failedFiles: ['/t/a.node-test.mjs', '/t/b.node-test.mjs'], counts: { failed: 2 } }), [CRASH]),
+    [],
+    'one crashed file plus one really failing file is not retried',
+  );
+  assert.deepEqual(teardownCrashRetryFiles(null, [CRASH]), []);
+  assert.deepEqual(teardownCrashRetryFiles(crashSummary(), []), []);
+});
+
+test('teardownCrashCodes defaults to 0xC0000005 and honours an override', () => {
+  assert.deepEqual(teardownCrashCodes(undefined), [CRASH]);
+  assert.deepEqual(teardownCrashCodes('77, 78'), [77, 78]);
+  assert.deepEqual(teardownCrashCodes(''), []);
+});
+
+test('the runner retries a teardown-crash file once, loudly, and passes when the retry is clean', () => {
+  const marker = path.join(os.tmpdir(), `rnt-crash-${process.pid}-${Date.now()}`);
+  const dir = makeFixtureDir({
+    'crash-once.node-test.mjs': `
+      import test from 'node:test';
+      import fs from 'node:fs';
+      test('passes', () => {});
+      if (!fs.existsSync(${JSON.stringify(marker)})) {
+        fs.writeFileSync(${JSON.stringify(marker)}, '');
+        process.on('exit', () => process.reallyExit(77));
+      }
+    `,
+  });
+  try {
+    const r = runWrapperWithStderr(['crash-retry', path.join(dir, 'crash-once.node-test.mjs')], REPO_ROOT, {
+      AGENT_TOOLING_TEARDOWN_CRASH_EXIT_CODES: '77',
+    });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /TEARDOWN CRASH RETRY/);
+    assert.match(r.stderr, /retry PASSED/);
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+});
+
+test('the runner fails when the retried file crashes again, and never retries a real failure', () => {
+  const dir = makeFixtureDir({
+    'crash-always.node-test.mjs': `
+      import test from 'node:test';
+      test('passes', () => {});
+      process.on('exit', () => process.reallyExit(77));
+    `,
+    'real-fail.node-test.mjs': `
+      import test from 'node:test';
+      import assert from 'node:assert/strict';
+      test('fails', () => { assert.equal(1, 2); });
+    `,
+  });
+  const again = runWrapperWithStderr(['crash-twice', path.join(dir, 'crash-always.node-test.mjs')], REPO_ROOT, {
+    AGENT_TOOLING_TEARDOWN_CRASH_EXIT_CODES: '77',
+  });
+  assert.notEqual(again.status, 0, `${again.stdout}${again.stderr}`);
+  assert.match(again.stderr, /retry FAILED again/);
+  const real = runWrapperWithStderr(['real-failure', path.join(dir, 'real-fail.node-test.mjs')], REPO_ROOT, {
+    AGENT_TOOLING_TEARDOWN_CRASH_EXIT_CODES: '77',
+  });
+  assert.notEqual(real.status, 0);
+  assert.doesNotMatch(real.stderr, /TEARDOWN CRASH RETRY/);
 });
 
 test('reconcileExit stays quiet when the failure IS attributable to a test', () => {
@@ -286,11 +377,17 @@ test('a test file that never finishes is exited at its deadline and named, and l
 
 test('fileTimeoutMs reads AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS and ignores a value that is not a positive number', async () => {
   const { DEFAULT_FILE_TIMEOUT_MS, fileTimeoutMs } = await import('./test-support/file-deadline.mjs');
-  assert.equal(fileTimeoutMs({}), DEFAULT_FILE_TIMEOUT_MS);
-  assert.equal(fileTimeoutMs({ AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS: '2500' }), 2500);
+  assert.equal(fileTimeoutMs({}, 'linux'), DEFAULT_FILE_TIMEOUT_MS);
+  assert.equal(fileTimeoutMs({ AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS: '2500' }, 'linux'), 2500);
   for (const bad of ['', '0', '-5', 'ten', 'Infinity']) {
-    assert.equal(fileTimeoutMs({ AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS: bad }), DEFAULT_FILE_TIMEOUT_MS, `"${bad}"`);
+    assert.equal(fileTimeoutMs({ AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS: bad }, 'linux'), DEFAULT_FILE_TIMEOUT_MS, `"${bad}"`);
   }
+  // The default follows the load-tolerance scale (so it outlasts the per-test budgets it widens);
+  // an explicit value is verbatim, and CI stays at the unscaled default.
+  assert.equal(fileTimeoutMs({}, 'win32'), DEFAULT_FILE_TIMEOUT_MS * 3);
+  assert.equal(fileTimeoutMs({ CI: 'true' }, 'win32'), DEFAULT_FILE_TIMEOUT_MS);
+  assert.equal(fileTimeoutMs({ AGENT_TOOLING_NODE_TEST_FILE_TIMEOUT_MS: '2500' }, 'win32'), 2500);
+  assert.equal(fileTimeoutMs({ AGENT_TOOLING_NODE_TEST_TIMEOUT_SCALE: '2' }, 'linux'), DEFAULT_FILE_TIMEOUT_MS * 2);
   // The default must leave room under the CI job's 45-minute cap, and far above a healthy file.
   assert.ok(DEFAULT_FILE_TIMEOUT_MS >= 5 * 60_000 && DEFAULT_FILE_TIMEOUT_MS <= 15 * 60_000);
 });

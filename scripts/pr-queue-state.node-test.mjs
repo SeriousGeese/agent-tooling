@@ -2,7 +2,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { batchQuery, classify, DEQUEUE, dequeue, line, main as stateMain, needsBash, QUERY, readState, readStates, rearm } from './pr-queue-state.mjs';
+import { batchQuery, classify, DEQUEUE, dequeue, line, main as stateMain, needsBash, prWorkflowFile, gateCheckName, QUERY, readState, readStates, rearm } from './pr-queue-state.mjs';
+
+// The module reads the consumer-prefixed PR workflow and gate check names from the environment
+// (default pr.yml / gate), and a consumer sets them for its own workflow names (for example in a
+// Claude Code settings.json env, which every shell call inherits). These tests assert the DEFAULTS,
+// so drop every prefixed spelling from this process's environment before any test runs. The match
+// is prefix-agnostic on purpose: sync rewrites the prefix on the way into a consumer.
+for (const key of Object.keys(process.env)) {
+  if (/_(PR_WORKFLOW|GATE_CHECK)$/i.test(key)) delete process.env[key];
+}
+
+test('the consumer PR workflow and gate check names are scrubbed, so the defaults are under test', () => {
+  assert.equal(prWorkflowFile(), 'pr.yml');
+  assert.equal(gateCheckName(), 'gate');
+});
 
 const node = (over = {}) => ({ number: 7, state: 'OPEN', mergeCommit: null, autoMergeRequest: null, mergeQueueEntry: null, timelineItems: { nodes: [] }, ...over });
 const removed = (reason) => ({ timelineItems: { nodes: [{ __typename: 'RemovedFromMergeQueueEvent', createdAt: 't', reason }] } });

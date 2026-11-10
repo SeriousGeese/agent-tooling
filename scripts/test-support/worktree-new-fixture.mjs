@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { removeTempDir } from './cleanup.mjs';
+import { scaledMs } from './timeout-scale.mjs';
 import { copyTemplate, disposeTemplates } from './git-fixture-template.mjs';
 
 export const execFileAsync = promisify(execFile);
@@ -149,7 +150,7 @@ export function runObserving(primary, args, env = ENV) {
  * `ceilingMs` elapses. `ceilingMs` is a loud upper bound on a hung run,
  * never a thing under assertion.
  */
-export async function waitForOutput(observed, pattern, { ceilingMs = 60_000 } = {}) {
+export async function waitForOutput(observed, pattern, { ceilingMs = scaledMs(60_000) } = {}) {
   const started = Date.now();
   while (!pattern.test(observed.getStdout())) {
     if (observed.settled) {
@@ -206,7 +207,7 @@ export function publishedToOrigin(f, branch) {
  * `ceilingMs` is an absolute bound so a script that never publishes fails LOUDLY
  * here instead of hanging the gate. It is never what any assertion rests on.
  */
-export async function holdLockUntilContended(f, branch, running, { extraHoldMs = 0, ceilingMs = 120_000 } = {}) {
+export async function holdLockUntilContended(f, branch, running, { extraHoldMs = 0, ceilingMs = scaledMs(120_000) } = {}) {
   let settled = null;
   running.then(
     (value) => { settled = { value }; },
@@ -249,7 +250,7 @@ export async function holdLockUntilContended(f, branch, running, { extraHoldMs =
 export const TEST_RETRY_SECONDS = '600';
 export const CONTENTION_ENV = { ...ENV, WORKTREE_NEW_CONFIG_RETRY_SECONDS: TEST_RETRY_SECONDS };
 // A loud upper bound on a hung run, never a thing under assertion.
-export const CONTENTION_TIMEOUT_MS = 300_000;
+export const CONTENTION_TIMEOUT_MS = scaledMs(300_000);
 
 // The same branch was later extended: "in sync with package-lock.json" is not
 // the same claim as "usable". One provisioning wave produced a tree that exited

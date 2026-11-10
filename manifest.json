@@ -20,7 +20,9 @@
     "scripts/test-support/cleanup.mjs",
     "scripts/test-support/exit-reconcile.mjs",
     "scripts/test-support/file-deadline.mjs",
-    "scripts/test-support/summary-reporter.mjs"
+    "scripts/test-support/summary-reporter.mjs",
+    "scripts/test-support/timeout-scale.mjs",
+    "scripts/timeout-scale.node-test.mjs"
   ],
   "sets": {
     "asks": [
