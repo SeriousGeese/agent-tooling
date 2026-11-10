@@ -1309,7 +1309,9 @@ if [ "$AWAIT" = "1" ]; then
         MINGW* | MSYS* | CYGWIN*) [ "${AGENT_TOOLING_ASSUME_POSIX_LOCKS:-0}" = "1" ] && AW_LOCK_OWNER=probe ;;
         *) AW_LOCK_OWNER=probe ;;
       esac
-      if [ "$AW_LOCK_OWNER" = "probe" ]; then
+      # AGENT_TOOLING_LOCK_PROVER=none: no prover (a test seam, and a way to opt out on a host whose
+      # fuser/lsof misreports).
+      if [ "$AW_LOCK_OWNER" = "probe" ] && [ "${AGENT_TOOLING_LOCK_PROVER:-}" != "none" ]; then
         AW_LOCK_OWNER=unknown
         if command -v fuser >/dev/null 2>&1; then
           if fuser "$AW_LOCK_FILE" >/dev/null 2>&1; then AW_LOCK_OWNER=held; else AW_LOCK_OWNER=free; fi

@@ -165,8 +165,8 @@ test('--await reports, and never deletes, an old index.lock when ownership canno
   const f = fixture();
   try {
     const lock = oldLock(f);
-    // No prover trusted: a Windows host (or no fuser/lsof) cannot establish ownership.
-    const r = await run(f.primary, ['--await', toBashPath(f.primary)], { ...ENV, AGENT_TOOLING_ASSUME_POSIX_LOCKS: '0', PATH: '/nonexistent-prover-dir' + path.delimiter + (ENV.PATH ?? ENV.Path ?? '') });
+    // No prover: a Windows host, or one with neither fuser nor lsof, cannot establish ownership.
+    const r = await run(f.primary, ['--await', toBashPath(f.primary)], { ...ENV, AGENT_TOOLING_LOCK_PROVER: 'none' });
     assert.equal(existsSync(lock), true, 'unproven ownership is never deleted');
     assert.match(r.stderr, /stale git lock NOT removed/);
     assert.match(r.stderr, /rm -f /);
