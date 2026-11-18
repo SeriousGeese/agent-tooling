@@ -19,6 +19,10 @@
 // the window's name goes in between: `ada-bot-win-3c-c54b71a9`, so a lead can tell WHICH
 // window holds a claim; see `claudeSessionName`.
 //
+// In Claude Code the suffix is the FIRST conversation id of the running process, not the current
+// one: `/clear` starts a new conversation in the same window, and the window must keep its claims.
+// See `processAnchoredSuffix`.
+//
 // Claiming with BEADS_ACTOR="probe-bot-deadbeef" sets `assignee` to exactly that string (checked
 // against a live DB on a scratch bead), so this really does drive the assignee and not
 // merely the audit trail.
@@ -34,7 +38,8 @@
 //      mutation: a Claude PreToolUse hook is no enforcement boundary for Codex or a human
 //      shell, so the helper must refuse on its own.
 import { execFileSync } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -127,7 +132,12 @@ export function sharedIdentityMessage(resolved) {
  * An explicit BEADS_ACTOR always wins untouched: if a human or another tool has
  * deliberately set an identity, honour it rather than rewriting it.
  */
-export function resolveActorId({ env = process.env, gitUserName = readGitUserName, readSessionFile = readTextFile } = {}) {
+export function resolveActorId({
+  env = process.env,
+  gitUserName = readGitUserName,
+  readSessionFile = readTextFile,
+  anchors = fileAnchorStore(env),
+} = {}) {
   const explicit = String(env.BEADS_ACTOR ?? '').trim();
   if (explicit) {
     return {
@@ -152,12 +162,113 @@ export function resolveActorId({ env = process.env, gitUserName = readGitUserNam
   const session = sessionIdSource(env);
   if (!session) return { id: base, base, suffix: '', distinct: false, source: 'base-only' };
 
-  const { suffix, name: sessionVar } = session;
-  // The window's name, between the base and the suffix, so a lead can tell which window
-  // holds a claim. Claude Code only; any miss keeps the plain `<base>-bot-<session8>`.
-  const name = sessionVar === 'CLAUDE_CODE_SESSION_ID' ? claudeSessionName(env, readSessionFile) : '';
+  const { name: sessionVar } = session;
+  let { suffix } = session;
+  let name = '';
+  let anchored = false;
+  if (sessionVar === 'CLAUDE_CODE_SESSION_ID') {
+    const claude = readClaudeSession(env, readSessionFile);
+    // The window's name, between the base and the suffix, so a lead can tell which window
+    // holds a claim. Claude Code only; any miss keeps the plain `<base>-bot-<session8>`.
+    name = claude && typeof claude.name === 'string' ? slugifyActorBase(claude.name) : '';
+    // The suffix of the FIRST conversation this Claude Code process ran, so `/clear` keeps the id.
+    const first = claude ? processAnchoredSuffix(claude, suffix, anchors) : '';
+    if (first) {
+      anchored = first !== suffix;
+      suffix = first;
+    }
+  }
   const id = name ? `${base}-bot-${name}-${suffix}` : `${base}-bot-${suffix}`;
-  return { id, base, suffix, distinct: true, source: 'derived', sessionVar, ...(name ? { sessionName: name } : {}) };
+  return {
+    id, base, suffix, distinct: true, source: 'derived', sessionVar,
+    ...(name ? { sessionName: name } : {}),
+    ...(anchored ? { anchored: true } : {}),
+  };
+}
+
+/** A process anchor holds exactly a suffix this module would have derived. */
+const ANCHOR_SUFFIX_RE = new RegExp(`^[a-z0-9]{1,${SESSION_SUFFIX_LEN}}$`);
+
+/** Anchors older than this are pruned: a Claude Code process does not live a month. */
+export const ANCHOR_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * The key for one Claude Code PROCESS, or '' when the sessions file does not identify it well
+ * enough. `procStart` is the process start time, so a pid reused by a later process gets a new key;
+ * `pidDomain` separates hosts and containers that share a config dir.
+ */
+export function processAnchorKey(claude) {
+  const pid = String(claude?.pid ?? '').trim();
+  const procStart = String(claude?.procStart ?? '').trim();
+  if (!/^\d+$/.test(pid) || !/^[0-9A-Za-z._:-]+$/.test(procStart)) return '';
+  const domain = String(claude?.pidDomain ?? '');
+  return createHash('sha256').update(`${domain}|${pid}|${procStart}`).digest('hex').slice(0, 16);
+}
+
+/**
+ * The session suffix this Claude Code process is known by: the one from the first conversation it
+ * ran, recorded the first time it is asked. `/clear` starts a new conversation (a new
+ * CLAUDE_CODE_SESSION_ID) in the SAME process, so without this the window would claim under a new
+ * actor and claim.sh would refuse its own beads for 4h. Returns '' (use the current suffix) when the
+ * process cannot be identified or the anchor cannot be read or written.
+ */
+export function processAnchoredSuffix(claude, currentSuffix, anchors) {
+  const key = processAnchorKey(claude);
+  if (!key || !anchors) return '';
+  try {
+    const existing = String(anchors.read(key) ?? '').trim();
+    if (ANCHOR_SUFFIX_RE.test(existing)) return existing;
+    if (anchors.create(key, currentSuffix)) return currentSuffix;
+    // Another call created it between our read and our create: theirs wins.
+    const raced = String(anchors.read(key) ?? '').trim();
+    return ANCHOR_SUFFIX_RE.test(raced) ? raced : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Anchors on disk, under `<claude config dir>/agent-actor-anchors/<key>`: one line, the suffix.
+ * `create` is exclusive (`wx`), so two concurrent first calls agree on one winner.
+ */
+export function fileAnchorStore(env = process.env, { now = Date.now } = {}) {
+  const dir = path.join(claudeConfigDir(env), 'agent-actor-anchors');
+  return {
+    read(key) {
+      try {
+        return readFileSync(path.join(dir, key), 'utf8');
+      } catch (err) {
+        if (err?.code === 'ENOENT') return null;
+        throw err;
+      }
+    },
+    create(key, suffix) {
+      mkdirSync(dir, { recursive: true });
+      try {
+        writeFileSync(path.join(dir, key), `${suffix}\n`, { flag: 'wx' });
+      } catch (err) {
+        if (err?.code === 'EEXIST') return false;
+        throw err;
+      }
+      pruneAnchors(dir, now());
+      return true;
+    },
+  };
+}
+
+function pruneAnchors(dir, nowMs) {
+  try {
+    for (const entry of readdirSync(dir)) {
+      const file = path.join(dir, entry);
+      if (nowMs - statSync(file).mtimeMs > ANCHOR_MAX_AGE_MS) rmSync(file, { force: true });
+    }
+  } catch {
+    // Best effort: a stale anchor is a few bytes, never a reason to fail.
+  }
+}
+
+function claudeConfigDir(env) {
+  return String(env.CLAUDE_CONFIG_DIR ?? '').trim() || path.join(String(env.HOME ?? '').trim() || os.homedir(), '.claude');
 }
 
 /**
@@ -186,21 +297,26 @@ export function isOldFormatOfSameSession(holder, me) {
  * name. `CLAUDE_CONFIG_DIR` relocates the directory, as it does for Claude Code itself.
  *
  * The name is stable across `/clear` while the session id is not, and it is two hex characters,
- * so it recurs over time: that is why the session suffix stays on the id after it.
+ * so it recurs over time: that is why a session suffix stays on the id after it.
  */
 export function claudeSessionName(env = process.env, readSessionFile = readTextFile) {
+  const parsed = readClaudeSession(env, readSessionFile);
+  return parsed && typeof parsed.name === 'string' ? slugifyActorBase(parsed.name) : '';
+}
+
+/** This session's parsed sessions file, or null on any miss (see claudeSessionName). */
+function readClaudeSession(env, readSessionFile) {
   const pid = String(env.CLAUDE_PID ?? '').trim();
   const sessionId = String(env.CLAUDE_CODE_SESSION_ID ?? '').trim();
-  if (!/^\d+$/.test(pid) || !sessionId) return '';
-  const configDir = String(env.CLAUDE_CONFIG_DIR ?? '').trim() || path.join(String(env.HOME ?? '').trim() || os.homedir(), '.claude');
+  if (!/^\d+$/.test(pid) || !sessionId) return null;
   let parsed;
   try {
-    parsed = JSON.parse(readSessionFile(path.join(configDir, 'sessions', `${pid}.json`)));
+    parsed = JSON.parse(readSessionFile(path.join(claudeConfigDir(env), 'sessions', `${pid}.json`)));
   } catch {
-    return '';
+    return null;
   }
-  if (!parsed || typeof parsed !== 'object' || parsed.sessionId !== sessionId) return '';
-  return typeof parsed.name === 'string' ? slugifyActorBase(parsed.name) : '';
+  if (!parsed || typeof parsed !== 'object' || parsed.sessionId !== sessionId) return null;
+  return parsed;
 }
 
 function readTextFile(file) {

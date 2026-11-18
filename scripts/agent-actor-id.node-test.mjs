@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -260,6 +260,86 @@ test('--check passes for the new format, read from a real sessions file', () => 
     const stale = cli({ CLAUDE_CODE_SESSION_ID: '0fc812d7-0000', CLAUDE_PID: '847250', CLAUDE_CONFIG_DIR: dir });
     assert.equal(stale.status, 0, stale.stderr);
     assert.equal(stale.stdout, 'cli-probe-bot-0fc812d7');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// /clear starts a new conversation (a new CLAUDE_CODE_SESSION_ID) in the SAME Claude Code process.
+const memAnchors = () => {
+  const m = new Map();
+  return { m, read: (k) => m.get(k) ?? null, create: (k, s) => (m.has(k) ? false : (m.set(k, s), true)) };
+};
+const proc = { pid: 847250, procStart: '48342', pidDomain: 'linux:abc:pid:[1]', name: 'win-3c' };
+const SID2 = '0fc812d7-2222-4333-8444-555566667777';
+const conv = (sessionId) => ({
+  env: { ...claudeEnv, CLAUDE_CODE_SESSION_ID: sessionId },
+  readSessionFile: sessionsFile({ ...proc, sessionId }),
+});
+
+test('THE POINT: /clear keeps the id, because the suffix is the first conversation of this process', () => {
+  const anchors = memAnchors();
+  const before = resolveActorId({ ...conv(SID), gitUserName: gitName('Bob'), anchors });
+  assert.equal(before.id, 'bob-bot-win-3c-c54b71a9');
+  assert.equal(before.anchored, undefined);
+  const after = resolveActorId({ ...conv(SID2), gitUserName: gitName('Bob'), anchors });
+  assert.equal(after.id, 'bob-bot-win-3c-c54b71a9');
+  assert.equal(after.anchored, true);
+  assert.match(after.id, DISTINCT_ACTOR_RE);
+});
+
+test('another Claude Code process, or a reused pid, is a different actor', () => {
+  const anchors = memAnchors();
+  resolveActorId({ ...conv(SID), gitUserName: gitName('Bob'), anchors });
+  const reused = resolveActorId({
+    env: { ...claudeEnv, CLAUDE_CODE_SESSION_ID: SID2 },
+    readSessionFile: sessionsFile({ ...proc, procStart: '99999', sessionId: SID2 }),
+    gitUserName: gitName('Bob'),
+    anchors,
+  });
+  assert.equal(reused.id, 'bob-bot-win-3c-0fc812d7');
+});
+
+test('no procStart, a broken store or a junk anchor falls back to the conversation suffix', () => {
+  const noProc = resolveActorId({
+    env: claudeEnv,
+    readSessionFile: sessionsFile({ sessionId: SID, name: 'win-3c' }),
+    gitUserName: gitName('Bob'),
+    anchors: { read: () => { throw new Error('must not read'); }, create: () => { throw new Error('must not write'); } },
+  });
+  assert.equal(noProc.id, 'bob-bot-win-3c-c54b71a9');
+  const broken = { read: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); }, create: () => true };
+  assert.equal(resolveActorId({ ...conv(SID2), gitUserName: gitName('Bob'), anchors: broken }).id, 'bob-bot-win-3c-0fc812d7');
+  const junk = { read: () => 'NOT A SUFFIX; rm -rf', create: () => false };
+  assert.equal(resolveActorId({ ...conv(SID2), gitUserName: gitName('Bob'), anchors: junk }).id, 'bob-bot-win-3c-0fc812d7');
+});
+
+test('Codex ignores anchors', () => {
+  const refuse = { read: () => { throw new Error('must not read'); }, create: () => { throw new Error('must not write'); } };
+  const r = resolveActorId({ env: { CODEX_THREAD_ID: '01a073bb-07f8-7bd1-a37f-5028daefdad1' }, gitUserName: gitName('Eve'), anchors: refuse });
+  assert.equal(r.id, 'eve-bot-daefdad1');
+});
+
+test('the CLI keeps the id across /clear through a real anchor file, and prunes month-old anchors', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'actor-id-'));
+  try {
+    mkdirSync(path.join(dir, 'sessions'));
+    mkdirSync(path.join(dir, 'agent-actor-anchors'));
+    const old = path.join(dir, 'agent-actor-anchors', 'deadbeefdeadbeef');
+    writeFileSync(old, 'aaaaaaaa\n');
+    const monthAgo = (Date.now() - 31 * 24 * 60 * 60 * 1000) / 1000;
+    utimesSync(old, monthAgo, monthAgo);
+    const write = (sessionId) =>
+      writeFileSync(path.join(dir, 'sessions', '847250.json'), JSON.stringify({ ...proc, sessionId }));
+    write(SID);
+    const first = cli({ CLAUDE_CODE_SESSION_ID: SID, CLAUDE_PID: '847250', CLAUDE_CONFIG_DIR: dir });
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal(first.stdout, 'cli-probe-bot-win-3c-c54b71a9');
+    write(SID2);
+    const cleared = cli({ CLAUDE_CODE_SESSION_ID: SID2, CLAUDE_PID: '847250', CLAUDE_CONFIG_DIR: dir });
+    assert.equal(cleared.status, 0, cleared.stderr);
+    assert.equal(cleared.stdout, 'cli-probe-bot-win-3c-c54b71a9');
+    assert.equal(existsSync(old), false, 'a month-old anchor is pruned');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
