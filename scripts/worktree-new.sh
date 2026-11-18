@@ -1311,8 +1311,18 @@ if [ "$AWAIT" = "1" ]; then
       esac
       # AGENT_TOOLING_LOCK_PROVER=none: no prover (a test seam, and a way to opt out on a host whose
       # fuser/lsof misreports).
-      # Which file was probed (its inode), so a lock replaced after the probe is never the one deleted.
-      AW_LOCK_INODE="$(ls -di "$AW_LOCK_FILE" 2>/dev/null | awk '{print $1}')"
+      # Which file was probed, so a lock replaced after the probe is never the one deleted. The inode
+      # alone is not an identity: a filesystem can hand a just-freed inode number straight to the
+      # next file created, so a git process that took the lock could get the stale lock's number.
+      # The mtime tells them apart: the stale lock is past the age gate, a new lock is seconds old.
+      aw_lock_id() {
+        local ino mt
+        ino="$(ls -di "$1" 2>/dev/null | awk '{print $1}')" || true
+        mt="$(stat -c %Y "$1" 2>/dev/null)" || true
+        [ -n "$ino" ] && [ -n "$mt" ] && printf '%s:%s' "$ino" "$mt"
+        return 0
+      }
+      AW_LOCK_INODE="$(aw_lock_id "$AW_LOCK_FILE")"
       if [ "$AW_LOCK_OWNER" = "probe" ] && [ "${AGENT_TOOLING_LOCK_PROVER:-}" != "none" ]; then
         AW_LOCK_OWNER=unknown
         # Only the prover's own "no process" answer means free: exit 1 with nothing printed. Any
@@ -1336,7 +1346,7 @@ if [ "$AWAIT" = "1" ]; then
       # inode or a fresh mtime, and that one is never removed. A missing inode proves nothing.
       if [ "$AW_LOCK_OWNER" = "free" ] && {
         [ -z "$AW_LOCK_INODE" ] ||
-          [ "$(ls -di "$AW_LOCK_FILE" 2>/dev/null | awk '{print $1}')" != "$AW_LOCK_INODE" ] ||
+          [ "$(aw_lock_id "$AW_LOCK_FILE")" != "$AW_LOCK_INODE" ] ||
           [ -z "$(find "$AW_LOCK_FILE" -maxdepth 0 -mmin "+$STALE_LOCK_MINUTES" 2>/dev/null)" ]
       }; then
         AW_LOCK_OWNER=changed
@@ -1345,14 +1355,14 @@ if [ "$AWAIT" = "1" ]; then
       # Remove by RENAME, then prove what moved. A check followed by `rm <path>` leaves a window in
       # which a new lock could appear at the path and be deleted. A rename is one atomic step that
       # moves whatever is there, and git creates index.lock exclusively, so no git process can take
-      # the lock while the stale file still sits at the path. If the moved file is the probed inode,
-      # it was the stale lock and is deleted. If not, something replaced the lock first: it is put
+      # the lock while the stale file still sits at the path. If the moved file is the probed one,
+      # it was the stale lock and is deleted. If not (inode or mtime differ), something replaced the lock first: it is put
       # back with a hard link (the same inode, so its owner's rename onto the index still works) and
       # nothing is deleted.
       if [ "$AW_LOCK_OWNER" = "free" ]; then
         AW_LOCK_QUAR="$AW_LOCK_FILE.stale-$$"
         if mv "$AW_LOCK_FILE" "$AW_LOCK_QUAR" 2>/dev/null; then
-          if [ "$(ls -di "$AW_LOCK_QUAR" 2>/dev/null | awk '{print $1}')" = "$AW_LOCK_INODE" ]; then
+          if [ "$(aw_lock_id "$AW_LOCK_QUAR")" = "$AW_LOCK_INODE" ]; then
             rm -f "$AW_LOCK_QUAR" 2>/dev/null || true
             AW_LOCK_OWNER=removed
           elif ln "$AW_LOCK_QUAR" "$AW_LOCK_FILE" 2>/dev/null; then
