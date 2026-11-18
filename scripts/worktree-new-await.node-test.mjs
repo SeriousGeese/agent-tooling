@@ -115,10 +115,11 @@ test('--await succeeds when node_modules is genuinely in sync and no install is 
 
 // A stub `fuser` first on PATH, exiting `code` (0 = a process has the file open, 1 = none).
 // ASSUME_POSIX_LOCKS lets the stub count on a Windows host, where no prover is trusted by default.
-function lockProverEnv(root, code) {
-  const bin = path.join(root, `prover-${code}`);
+// `body` runs first: shell lines with the probed path in "$1" (print an error, replace the lock).
+function lockProverEnv(root, code, body = '', name = `prover-${code}`) {
+  const bin = path.join(root, name);
   mkdirSync(bin, { recursive: true });
-  writeFileSync(path.join(bin, 'fuser'), `#!/bin/sh\nexit ${code}\n`);
+  writeFileSync(path.join(bin, 'fuser'), `#!/bin/sh\n${body}\nexit ${code}\n`);
   chmodSync(path.join(bin, 'fuser'), 0o755);
   return { ...withBinFirst(ENV, toBashPath(bin)), AGENT_TOOLING_ASSUME_POSIX_LOCKS: '1' };
 }
@@ -156,6 +157,46 @@ test('--await keeps an old index.lock a prover says is HELD, and warns', async (
     assert.equal(existsSync(lock), true);
     assert.match(r.stderr, /stale git lock NOT removed/);
     assert.match(r.stderr, /a process has it open/);
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
+test('--await keeps an old index.lock when the prover fails rather than answers (an error, an unknown option)', async () => {
+  const f = fixture();
+  try {
+    const lock = oldLock(f);
+    // exit 1 is also how fuser reports its own errors; with a message it proves nothing.
+    const errored = await run(
+      f.primary,
+      ['--await', toBashPath(f.primary)],
+      lockProverEnv(f.root, 1, 'echo "Cannot stat file $1: Permission denied" >&2', 'prover-err'),
+    );
+    assert.equal(existsSync(lock), true, 'a probe that errored is not "no process"');
+    assert.match(errored.stderr, /stale git lock NOT removed/);
+    assert.match(errored.stderr, /cannot prove/);
+
+    const unsupported = await run(f.primary, ['--await', toBashPath(f.primary)], lockProverEnv(f.root, 2, '', 'prover-2'));
+    assert.equal(existsSync(lock), true, 'any exit but 0 or a silent 1 is unknown');
+    assert.match(unsupported.stderr, /cannot prove/);
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
+test('--await never deletes a lock that a git process took after the probe', async () => {
+  const f = fixture();
+  try {
+    const lock = oldLock(f);
+    // The prover says "free", but by then a git process has replaced the stale lock with its own.
+    const r = await run(
+      f.primary,
+      ['--await', toBashPath(f.primary)],
+      lockProverEnv(f.root, 1, 'rm -f "$1"; : > "$1"', 'prover-race'),
+    );
+    assert.equal(existsSync(lock), true, 'the new, live lock must survive');
+    assert.doesNotMatch(r.stdout, /Cleared a stale git lock/);
+    assert.match(r.stderr, /changed after the check/);
   } finally {
     removeTempDir(f.root, 'worktree-new.node-test');
   }
