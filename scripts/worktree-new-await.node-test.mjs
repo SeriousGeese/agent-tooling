@@ -14,6 +14,7 @@ import {
   writeFileSync,
   readFileSync,
   existsSync,
+  readdirSync,
   statSync,
   chmodSync,
   utimesSync,
@@ -197,6 +198,32 @@ test('--await never deletes a lock that a git process took after the probe', asy
     assert.equal(existsSync(lock), true, 'the new, live lock must survive');
     assert.doesNotMatch(r.stdout, /Cleared a stale git lock/);
     assert.match(r.stderr, /changed after the check/);
+  } finally {
+    removeTempDir(f.root, 'worktree-new.node-test');
+  }
+});
+
+test('--await never deletes a lock taken between the final check and the removal', async () => {
+  const f = fixture();
+  try {
+    const lock = oldLock(f);
+    const env = lockProverEnv(f.root, 1, '', 'prover-window');
+    // A `mv` that lets a git process take the lock in the last instant before the rename: the stale
+    // file is replaced by a new one (new inode), then the real mv runs.
+    const bin = path.join(f.root, 'prover-window');
+    writeFileSync(
+      path.join(bin, 'mv'),
+      '#!/bin/sh\ncase "$1" in *index.lock) rm -f "$1"; echo live > "$1" ;; esac\n' +
+        'if [ -x /usr/bin/mv ]; then exec /usr/bin/mv "$@"; fi\nexec /bin/mv "$@"\n',
+    );
+    chmodSync(path.join(bin, 'mv'), 0o755);
+    const r = await run(f.primary, ['--await', toBashPath(f.primary)], env);
+    assert.equal(existsSync(lock), true, 'the live lock must be back at its path');
+    assert.equal(readFileSync(lock, 'utf8'), 'live\n', 'and it is the live lock, not the stale one');
+    assert.doesNotMatch(r.stdout, /Cleared a stale git lock/);
+    assert.match(r.stderr, /changed after the check/);
+    const leftovers = readdirSync(path.dirname(lock)).filter((n) => n.startsWith('index.lock.stale-'));
+    assert.deepEqual(leftovers, [], 'no quarantine file is left behind');
   } finally {
     removeTempDir(f.root, 'worktree-new.node-test');
   }
