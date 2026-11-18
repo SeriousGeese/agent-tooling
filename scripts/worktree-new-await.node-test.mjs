@@ -14,6 +14,7 @@ import {
   writeFileSync,
   readFileSync,
   existsSync,
+  readdirSync,
   statSync,
   chmodSync,
   utimesSync,
@@ -201,6 +202,40 @@ test('--await never deletes a lock that a git process took after the probe', asy
     removeTempDir(f.root, 'worktree-new.node-test');
   }
 });
+
+// A `mv` that lets a git process take the lock in the last instant before the rename, then runs the
+// real mv. `replace` removes the stale file and creates a new one, which may or may not get a new
+// inode number (a filesystem can reuse the one just freed). `reuse` rewrites the file in place: the
+// SAME inode with a fresh mtime, which is what inode reuse looks like, made deterministic.
+for (const [mode, takeLock] of [
+  ['replace', 'rm -f "$1"; echo live > "$1"'],
+  ['reuse', 'echo live > "$1"'],
+]) {
+  test(`--await never deletes a lock taken between the final check and the removal (${mode})`, async () => {
+    const f = fixture();
+    try {
+      const lock = oldLock(f);
+      const name = `prover-window-${mode}`;
+      const env = lockProverEnv(f.root, 1, '', name);
+      const bin = path.join(f.root, name);
+      writeFileSync(
+        path.join(bin, 'mv'),
+        `#!/bin/sh\ncase "$1" in *index.lock) ${takeLock} ;; esac\n` +
+          'if [ -x /usr/bin/mv ]; then exec /usr/bin/mv "$@"; fi\nexec /bin/mv "$@"\n',
+      );
+      chmodSync(path.join(bin, 'mv'), 0o755);
+      const r = await run(f.primary, ['--await', toBashPath(f.primary)], env);
+      assert.equal(existsSync(lock), true, 'the live lock must be back at its path');
+      assert.equal(readFileSync(lock, 'utf8'), 'live\n', 'and it is the live lock, not the stale one');
+      assert.doesNotMatch(r.stdout, /Cleared a stale git lock/);
+      assert.match(r.stderr, /changed after the check/);
+      const leftovers = readdirSync(path.dirname(lock)).filter((n) => n.startsWith('index.lock.stale-'));
+      assert.deepEqual(leftovers, [], 'no quarantine file is left behind');
+    } finally {
+      removeTempDir(f.root, 'worktree-new.node-test');
+    }
+  });
+}
 
 test('--await reports, and never deletes, an old index.lock when ownership cannot be proven', async () => {
   const f = fixture();
