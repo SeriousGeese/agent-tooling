@@ -146,9 +146,20 @@ messages use: `<base>-bot-<name>-<session8>`. A lead reading `bd show` can then 
 holds a claim. The name is read from `~/.claude/sessions/<CLAUDE_PID>.json` (or under
 `CLAUDE_CONFIG_DIR`). That file is undocumented harness state, so it is used only when its
 `sessionId` is this session's. Any miss falls back to `<base>-bot-<session8>`, and so does Codex.
-The suffix stays because a name is two hex characters that recur across a person's sessions, and
-it survives `/clear` while the session id does not. Without the suffix, a stale claim from an
-earlier task in the same window would read as "already mine". Both formats match one regex,
+The suffix stays because a name is two hex characters that recur across a person's sessions.
+
+### The id survives `/clear`
+
+`/clear` starts a new conversation, with a new session id, in the same Claude Code process. The
+suffix is therefore the session id of the process's FIRST conversation, recorded in
+`<claude config dir>/agent-actor-anchors/<key>` the first time the id is resolved. The key hashes
+the `pid`, `procStart` and `pidDomain` from the sessions file, so a reused pid is a new actor.
+Without the anchor, a window that cleared to pick up a handoff claimed under a new actor, and
+`claim.sh` refused its own beads for 4h. The trade-off: a claim left by an earlier task in the same
+window now reads as "already mine", so check `bd list --assignee "$(node scripts/agent-actor-id.mjs)"`
+after a `/clear` and park what the new task will not finish. A restarted or resumed process starts a
+new anchor. A missing `procStart`, or an anchor that cannot be read or written, falls back to the
+current session id. Anchors older than 30 days are pruned. Both formats match one regex,
 `DISTINCT_ACTOR_RE`, exported from `agent-actor-id.mjs` for the hook, the friction filer and the
 ritual tests. The hook also treats an old-format claim with this session's base and suffix as this
 session's, so a claim made before the format changed is not blocked.
