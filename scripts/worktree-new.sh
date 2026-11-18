@@ -1311,13 +1311,35 @@ if [ "$AWAIT" = "1" ]; then
       esac
       # AGENT_TOOLING_LOCK_PROVER=none: no prover (a test seam, and a way to opt out on a host whose
       # fuser/lsof misreports).
+      # Which file was probed (its inode), so a lock replaced after the probe is never the one deleted.
+      AW_LOCK_INODE="$(ls -di "$AW_LOCK_FILE" 2>/dev/null | awk '{print $1}')"
       if [ "$AW_LOCK_OWNER" = "probe" ] && [ "${AGENT_TOOLING_LOCK_PROVER:-}" != "none" ]; then
         AW_LOCK_OWNER=unknown
+        # Only the prover's own "no process" answer means free: exit 1 with nothing printed. Any
+        # other exit, or any output with exit 1 (a permission error, an unsupported option, lsof's
+        # warnings), is a probe that could not tell, so the lock stays.
+        # `|| AW_PROBE_RC=$?`: under set -e a nonzero probe must be recorded, not end the run.
+        AW_PROBE_OUT=""; AW_PROBE_RC=0
         if command -v fuser >/dev/null 2>&1; then
-          if fuser "$AW_LOCK_FILE" >/dev/null 2>&1; then AW_LOCK_OWNER=held; else AW_LOCK_OWNER=free; fi
+          AW_PROBE_OUT="$(fuser "$AW_LOCK_FILE" 2>&1)" || AW_PROBE_RC=$?
         elif command -v lsof >/dev/null 2>&1; then
-          if lsof -- "$AW_LOCK_FILE" >/dev/null 2>&1; then AW_LOCK_OWNER=held; else AW_LOCK_OWNER=free; fi
+          AW_PROBE_OUT="$(lsof -- "$AW_LOCK_FILE" 2>&1)" || AW_PROBE_RC=$?
+        else
+          AW_PROBE_RC=-1
         fi
+        if [ "$AW_PROBE_RC" = "0" ]; then AW_LOCK_OWNER=held
+        elif [ "$AW_PROBE_RC" = "1" ] && [ -z "$AW_PROBE_OUT" ]; then AW_LOCK_OWNER=free
+        fi
+      fi
+      # Still the probed file, and still past the age gate, right before the delete: a git process
+      # that took the lock after the probe made a NEW file (git creates it exclusively), with a new
+      # inode or a fresh mtime, and that one is never removed. A missing inode proves nothing.
+      if [ "$AW_LOCK_OWNER" = "free" ] && {
+        [ -z "$AW_LOCK_INODE" ] ||
+          [ "$(ls -di "$AW_LOCK_FILE" 2>/dev/null | awk '{print $1}')" != "$AW_LOCK_INODE" ] ||
+          [ -z "$(find "$AW_LOCK_FILE" -maxdepth 0 -mmin "+$STALE_LOCK_MINUTES" 2>/dev/null)" ]
+      }; then
+        AW_LOCK_OWNER=changed
       fi
       AW_LOCK_AGE="$(( ( $(date +%s) - $(stat -c %Y "$AW_LOCK_FILE" 2>/dev/null || echo "$(date +%s)") ) / 60 ))"
       if [ "$AW_LOCK_OWNER" = "free" ] && rm -f "$AW_LOCK_FILE" 2>/dev/null; then
@@ -1326,6 +1348,7 @@ if [ "$AWAIT" = "1" ]; then
         case "$AW_LOCK_OWNER" in
           held) AW_LOCK_WHY="a process has it open" ;;
           free) AW_LOCK_WHY="it could not be removed" ;;
+          changed) AW_LOCK_WHY="it changed after the check (a git process may have just taken it)" ;;
           *) AW_LOCK_WHY="this host cannot prove that no git process holds it" ;;
         esac
         echo "WARNING: stale git lock NOT removed: $AW_LOCK_FILE is about ${AW_LOCK_AGE} minutes old (older than ${STALE_LOCK_MINUTES}), and ${AW_LOCK_WHY}. git add fails until it is gone. Check that no git process is running in $AW, then:  rm -f \"$AW_LOCK_FILE\"" >&2

@@ -566,12 +566,18 @@ this out literally, with the ids and the writing session's actor id filled in:
 
 ```bash
 node scripts/bd-dolt-sync.mjs pull
+taken=""; refused=""
 for id in <id-1> <id-2>; do
-  bd update "$id" -a "$(node scripts/agent-actor-id.mjs)" --if-assignee "<writer actor id>" --force \
-    || echo "TAKEOVER REFUSED for $id (exit $?): someone else holds it now, stop and tell the user"
+  if bd update "$id" -a "$(node scripts/agent-actor-id.mjs)" --if-assignee "<writer actor id>" --force; then
+    taken="$taken $id"
+  else
+    refused="$id"; break   # the first refusal ends the takeover; later beads are not touched
+  fi
 done
+# Push even after a refusal, so the tracker shows exactly which beads this session now holds.
 node scripts/bd-dolt-sync.mjs push && node scripts/bd-dolt-sync.mjs pull
-bd show <id-1> <id-2> --json   # verify: every assignee is now this session's actor id
+bd show <id-1> <id-2> --json   # verify: every taken bead's assignee is now this session's actor id
+[ -z "$refused" ] || echo "TAKEOVER STOPPED at $refused. Taken:${taken:- none}. STOP: no worktree, no gate, no watcher; tell the user."
 ```
 
 - **Why `--force`, and why it is safe here.** bd refuses a reassignment of another actor's live
@@ -580,8 +586,11 @@ bd show <id-1> <id-2> --json   # verify: every assignee is now this session's ac
   pins the write to the writing session's claim: if anyone else holds the bead by now, nothing is
   written and bd exits 13. Never drop `--if-assignee` from this command, and never use `--force`
   anywhere else in a handoff.
-- **Exit 13 (or any refusal): stop.** Do not retry with a different `--if-assignee`. Report which
-  beads were taken over and which were not, and let the user decide.
+- **Exit 13 (or any refusal): stop the whole handoff.** The loop breaks at the first refusal, so
+  no later bead is touched, and the push records only the beads already taken. After a
+  `TAKEOVER STOPPED` line, create no worktree, run no gate and start no watcher. Do not retry with
+  a different `--if-assignee`. Report the taken and refused beads, and let the user decide
+  whether to release the taken ones (`bd update <id> --status open -a ""`) or carry on with them.
 - **Take over before `git pull`, worktrees and watchers**, so the tracker says who holds the
   work for the whole time the work happens. Add a `bd note` per bead naming the prompt path in
   the same push, so the trail reads: claimed for a handoff, then taken over by the session that
