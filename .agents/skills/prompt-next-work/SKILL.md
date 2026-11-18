@@ -55,9 +55,17 @@ Consequences the generated prompt MUST state:
 - Create the worktree directly instead: `bash scripts/worktree-new.sh <slug> <branch>`.
   That is the half of `claim.sh` the next session actually needs, and it still publishes the
   branch immediately (the claim must be visible in git at once) and installs deps in the background.
-- To make attribution honest, re-point the assignee, **not** with `--claim`:
-  `bd update <id> -a "$(node scripts/agent-actor-id.mjs)"`. The age check runs only inside
-  `claim.sh`, so a plain `-a` is allowed and is the clean way to take ownership.
+- Take the beads over as the next step after winning the start marker (see "Take the beads
+  over" below): the handoff is only finished once the new session holds them. A plain
+  `bd update <id> -a <me>` is NOT enough: bd (1.3.x) refuses to reassign another actor's live
+  `in_progress` claim (`cannot reassign <id>: held by "<writer>" (in_progress)`), and the
+  writing session cannot pre-assign them because it cannot know the next session's id. The
+  takeover is `bd update <id> -a "$(node scripts/agent-actor-id.mjs)" --if-assignee
+  "<writer actor>" --force`: `--force` lifts the live-claim refusal, and `--if-assignee` makes
+  the write happen only while the bead is still held by the session that wrote this prompt, so
+  it can never take a bead from anyone else (a mismatch writes nothing and exits 13). That is a
+  hand-over the holder asked for in writing, not a steal, and it is the only `--force` the
+  prompt may use.
 
 ## Procedure
 
@@ -466,10 +474,13 @@ actor id, so `scripts/claim.sh` will refuse you for
 Never set `AGENT_TOOLING_ALLOW_CLAIM_STEAL=1` here.
 
 Instead:
+- Take them over in **First moves**, right after the start marker: the guarded
+  `bd update <id> -a <you> --if-assignee "<actor-id>" --force` there hands each bead from this
+  session to yours. A plain `-a` is refused while they are held, and `--claim` is refused by the
+  age check; the guarded `--force` is the one sanctioned way. Exit 13 on a bead means someone
+  else holds it now: stop and tell the user.
 - Worktree: `bash scripts/worktree-new.sh <slug> <branch>` (publishes the branch, installs deps
   in the background; `bash scripts/worktree-new.sh --await <slug>` before any gate).
-- Optional, to make attribution honest: `bd update <id> -a "$(node scripts/agent-actor-id.mjs)"`,
-a plain `-a`, never `--claim`.
 
 ## Context you need that is not in the repo
 
@@ -510,11 +521,12 @@ primary checkout and the verification is its exit 0 `landed:` line.>
 
 ## First moves
 
-<the literal first two or three commands, so the session starts without re-deriving them.
+<the literal first commands, so the session starts without re-deriving them.
 The very first command is ALWAYS the start marker (see "One session per handoff" below), with
-this prompt's absolute path filled in. When there is an "Unlanded business" section, the next
-move starts its watchers in the background (see "Watchers start first" below), before any
-worktree or gate.>
+this prompt's absolute path filled in. The second is ALWAYS the takeover (see "Take the beads
+over" below), with the bead ids and this session's actor id filled in. When there is an
+"Unlanded business" section, the next move starts its watchers in the background (see
+"Watchers start first" below), before any worktree or gate.>
 ```
 
 ### One session per handoff
@@ -545,6 +557,35 @@ one wins. The check is local and never touches Dolt.
 - **Delete the marker yourself only if you stop before doing anything**, for example when the
   user says to release the claims. A marker left by a session that did some of the work is the
   record that it did.
+
+### Take the beads over
+
+Winning the marker proves this is the one session the handoff is for, so the next move hands
+every in-scope bead from the writing session to it. The generated **First moves** block writes
+this out literally, with the ids and the writing session's actor id filled in:
+
+```bash
+node scripts/bd-dolt-sync.mjs pull
+for id in <id-1> <id-2>; do
+  bd update "$id" -a "$(node scripts/agent-actor-id.mjs)" --if-assignee "<writer actor id>" --force \
+    || echo "TAKEOVER REFUSED for $id (exit $?): someone else holds it now, stop and tell the user"
+done
+node scripts/bd-dolt-sync.mjs push && node scripts/bd-dolt-sync.mjs pull
+bd show <id-1> <id-2> --json   # verify: every assignee is now this session's actor id
+```
+
+- **Why `--force`, and why it is safe here.** bd refuses a reassignment of another actor's live
+  `in_progress` claim unless forced, and the writing session cannot hand the beads over itself
+  because the next session's actor id does not exist until that session starts. `--if-assignee`
+  pins the write to the writing session's claim: if anyone else holds the bead by now, nothing is
+  written and bd exits 13. Never drop `--if-assignee` from this command, and never use `--force`
+  anywhere else in a handoff.
+- **Exit 13 (or any refusal): stop.** Do not retry with a different `--if-assignee`. Report which
+  beads were taken over and which were not, and let the user decide.
+- **Take over before `git pull`, worktrees and watchers**, so the tracker says who holds the
+  work for the whole time the work happens. Add a `bd note` per bead naming the prompt path in
+  the same push, so the trail reads: claimed for a handoff, then taken over by the session that
+  ran it.
 
 ### Watchers start first
 
