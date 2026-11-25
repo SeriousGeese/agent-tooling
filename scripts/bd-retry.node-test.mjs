@@ -60,6 +60,31 @@ test('a lock failure is retried until bd gets through, one line per wait naming 
   }
 });
 
+// A bad delay knob once would have reached `sleep` and, under set -e, aborted the caller mid-claim.
+test('a non-numeric AGENT_TOOLING_BD_LOCK_DELAY_SECONDS falls back to the ladder, never aborts', { skip: SKIP }, () => {
+  for (const bad of ['soon', '-1', '1.2.3', '.', '3s']) {
+    const stub = stubBd(LOCKED, 1);
+    try {
+      // The first ladder step is 2 s; set -e is on, as in claim.sh.
+      const r = bdRetry(stub, ['show', 'x-1', '--json'], { AGENT_TOOLING_BD_LOCK_DELAY_SECONDS: bad });
+      assert.equal(r.status, 0, `${bad}: ${r.stderr}`);
+      assert.equal(r.stdout, '{"ok":true}\n', bad);
+      assert.equal(stub.calls(), 2, bad);
+      assert.match(r.stderr, /retrying in 2s$/m, `${bad} uses the ladder`);
+    } finally {
+      removeTempDir(stub.dir, 'bd-retry.node-test');
+    }
+  }
+  const stub = stubBd(LOCKED, 1);
+  try {
+    const r = bdRetry(stub, ['show', 'x-1', '--json'], { AGENT_TOOLING_BD_LOCK_DELAY_SECONDS: '0.1' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /retrying in 0\.1s$/m, 'a decimal is a valid wait');
+  } finally {
+    removeTempDir(stub.dir, 'bd-retry.node-test');
+  }
+});
+
 test('the retry is bounded: the last lock failure returns its exit code and says why', { skip: SKIP }, () => {
   const stub = stubBd('share access flags are incompatible', 99);
   try {

@@ -13,8 +13,8 @@
 # (it drops only bd's own stderr, for a caller that used to send it to /dev/null).
 #
 # Knobs: AGENT_TOOLING_BD_LOCK_ATTEMPTS (default 8, 1 disables the retry) and
-# AGENT_TOOLING_BD_LOCK_DELAY_SECONDS (a fixed wait; default a 2, 3, 5, 8 ... second ladder,
-# about 40 s in all). The pattern matches bd-dolt-sync.mjs's BD_LOCK_PATTERN; keep them in step.
+# AGENT_TOOLING_BD_LOCK_DELAY_SECONDS (a fixed wait in seconds; default a 2, 3, 5, 8 ... second
+# ladder, about 40 s in all). A value that is not a plain number is ignored (the ladder is used). The pattern matches bd-dolt-sync.mjs's BD_LOCK_PATTERN; keep them in step.
 
 BD_LOCK_RE='another process has locked a portion of the file|being used by another process|share access flags are incompatible|database is locked|locked by another (dolt|bd) process|fslock'
 
@@ -38,7 +38,12 @@ bd_retry() {
     if [ "$rc" -ne 0 ] && [ "$attempt" -lt "$attempts" ] && bd_lock_error "$err"; then
       idx=$(( attempt - 1 ))
       [ "$idx" -lt "${#ladder[@]}" ] || idx=$(( ${#ladder[@]} - 1 ))
-      delay="${AGENT_TOOLING_BD_LOCK_DELAY_SECONDS:-${ladder[$idx]}}"
+      delay="${AGENT_TOOLING_BD_LOCK_DELAY_SECONDS:-}"
+      # Only a plain number (seconds, decimals allowed) is used; anything else falls back to the
+      # ladder, so a bad knob can never make `sleep` fail and abort a `set -e` caller mid-claim.
+      case "$delay" in
+        ''|*[!0-9.]*|*.*.*|.) delay="${ladder[$idx]}" ;;
+      esac
       echo "bd $1: the beads database is locked by another bd process (attempt $attempt/$attempts); retrying in ${delay}s" >&2
       sleep "$delay"
       attempt=$(( attempt + 1 ))
