@@ -65,6 +65,7 @@ case "$args" in
     read -r kind a <<<"$(next "\${FAKE_QUEUE:-NONE}" "$FAKE_DIR/queue-calls")"
     [ "$kind" = "RATELIMIT" ] && ratelimit
     commit=null; [ "$s" = "MERGED" ] && commit='{"oid":"${MERGE}"}'
+    [ "$s" = "MERGED_NOSHA" ] && s=MERGED   # merged, but GitHub's answer carries no merge commit
     entry=null; auto=null; events='[]'; decision=null; merge_state='"CLEAN"'; checks=null
     case "$kind" in
       NONE) ;;
@@ -77,7 +78,7 @@ case "$args" in
         esac ;;
       EJECTED) events='[{"__typename":"RemovedFromMergeQueueEvent","createdAt":"t","reason":"'"$a"'"}]' ;;
       REARMED) events='[{"__typename":"RemovedFromMergeQueueEvent","createdAt":"t","reason":"'"$a"'"}]'; auto='{"enabledAt":"t"}' ;;
-      *) entry='{"state":"'"$kind"'","position":'"$a"'}' ;;
+      *) entry='{"state":"'"$kind"'","position":'"\${a:-null}"'}' ;;
     esac
     printf '{"data":{"repository":{"pullRequest":{"number":7,"state":"%s","mergeCommit":%s,"autoMergeRequest":%s,"mergeQueueEntry":%s,"reviewDecision":%s,"mergeStateStatus":%s,"timelineItems":{"nodes":%s},"headChecks":%s}}}}\\n' "$s" "$commit" "$auto" "$entry" "$decision" "$merge_state" "$events" "$checks" ;;
   *) echo "unexpected gh $args" >&2; exit 2 ;;
@@ -330,6 +331,26 @@ gated('--queued-ok: QUEUED is done, exit 0, the worktree kept and the rest named
     const merged = run(f, [f.worktree, '--queued-ok']);
     assert.equal(merged.status, 0, merged.out);
     assert.match(merged.out, /^landed: PR #7/m);
+  } finally {
+    removeTempDir(f.root, 'land.node-test');
+  }
+});
+
+// pr-queue-state.mjs's line ends with a checks token. A bare `merged` (no sha in GitHub's answer)
+// once read `checks:NONE` as the merge commit, so the "no merge commit" guard never fired.
+gated('the trailing checks token is never read as the merge sha or the queue position', () => {
+  const f = fixture();
+  try {
+    const r = run(f, [f.worktree], { FAKE_PR_STATES: 'MERGED_NOSHA' });
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /PR #7 is MERGED but reports no merge commit/);
+    assert.doesNotMatch(r.out, /merged: PR #7 as checks:/);
+    assert.equal(existsSync(f.worktree), true, 'nothing removed on a merge it cannot name');
+    const report = run(f, [f.worktree, '--no-wait'], { FAKE_PR_STATES: 'MERGED_NOSHA' });
+    assert.doesNotMatch(report.out, /merge checks:/);
+    const queued = run(f, [f.worktree, '--queued-ok'], { FAKE_PR_STATES: 'OPEN', FAKE_QUEUE: 'QUEUED' });
+    assert.equal(queued.status, 0, queued.out);
+    assert.doesNotMatch(queued.out, /position checks:/, 'a queue entry with no position never reads the token as one');
   } finally {
     removeTempDir(f.root, 'land.node-test');
   }

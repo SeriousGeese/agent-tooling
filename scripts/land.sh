@@ -289,6 +289,11 @@ read_pr() {
   [ -n "$qline" ] || qline="$(REPO="$REPO" node "$HERE/pr-queue-state.mjs" "$PR")" || true
   verdict=""; v1=""; v2=""; merge=""
   read -r verdict v1 v2 _ <<<"$qline"
+  # The trailing checks token is never a verdict word. A bare `merged` with no sha would otherwise
+  # read it as the merge commit and slip past the "no merge commit" guard; a queued line short of
+  # its position would read it as the position.
+  case "$v1" in checks:*) v1=""; v2="" ;; esac
+  case "$v2" in checks:*) v2="" ;; esac
   case "$verdict" in
     merged) state=MERGED; merge="$v1" ;;
     closed) state=CLOSED ;;
