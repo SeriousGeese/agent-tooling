@@ -8,7 +8,8 @@
  *   node scripts/pr-queue-state.mjs <pr> --rearm [--repo owner/name] [--json]
  *
  * --rearm arms auto-merge only once the PR workflow (pr.yml, or AGENT_TOOLING_PR_WORKFLOW) has a pull_request run for the PR's current head, and
- * exits 1 without arming otherwise. Use it after a push instead of a bare
+ * exits 1 without arming otherwise. It reads the PR again after `gh pr merge --auto` and exits 1, printing
+ * nothing on stdout, unless auto-merge is armed (or the PR went straight into the queue or merged). Use it after a push instead of a bare
  * `gh pr merge --auto <n>`: arming straight after a push once re-queued a PR on its OLD head. It is
  * also how a draft is armed after `gh pr ready`: it refuses a draft, and a PR whose ready_for_review
  * run has not started yet.
@@ -20,7 +21,11 @@
  * the mutation and exits 1 if the PR is still queued. A PR that is not queued is left alone and
  * its state printed.
  *
- * Prints one line, `<verdict> ...`, or with --json the whole answer:
+ * Prints one line, `<verdict> ... checks:<rollup>`, or with --json the whole answer. `checks:` is the head
+ * commit's statusCheckRollup (SUCCESS, FAILURE, ERROR, PENDING, EXPECTED), or NONE while no check run has
+ * registered on the head yet (straight after a push or `gh pr ready`). NONE, PENDING and EXPECTED are NOT
+ * terminal: a wait loop exits on a positive token (`merged`, `closed`, checks:SUCCESS|FAILURE|ERROR), never
+ * on the absence of checks:PENDING, which a head with no runs yet also lacks.
  *
  *   merged    the PR merged (mergeCommit)
  *   closed    closed without merging
@@ -40,6 +45,8 @@
  *   open      open and not queued for any other reason (CI pending, review pending, auto-merge
  *             unarmed)
  *
+ * The verdict and its words come first, so `read -r verdict v1 v2 _` reads them; the `checks:` token is last.
+ *
  * WHY THIS AND NOT `gh pr view`. `autoMergeRequest` reads null once a PR is queued, and
  * `gh pr merge --auto` only prints that the queue sets the strategy, so the REST/CLI views cannot
  * tell "queued" from "never armed", nor "ejected" from "not yet queued". The merge-queue entry and
@@ -48,7 +55,7 @@
  * SEVERAL PRs are read in ONE aliased GraphQL query, never one call each: the shared
  * account's secondary rate limit counts requests across every session, so per-PR polling by a few
  * sessions stalls them all. Each PR prints `#<n> <verdict> ... checks:<rollup>` (the head commit's
- * statusCheckRollup: SUCCESS, FAILURE, PENDING, ERROR, EXPECTED, or none); --json prints an array.
+ * statusCheckRollup: SUCCESS, FAILURE, PENDING, ERROR, EXPECTED, or NONE); --json prints an array.
  * A watcher polls this every 5 minutes or slower.
  *
  * RATE LIMITED: when GitHub answers with a rate limit (primary or secondary), stdout is the one
@@ -78,7 +85,7 @@ timelineItems(last:1,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QU
  * The single-PR read adds the head's check runs for heldBy()'s `gate` reason. Only here: every other
  * caller reads many PRs at once, where a contexts connection on each costs far more than it answers.
  */
-const HEAD_CHECKS = `headChecks: commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{
+const HEAD_CHECKS = `headChecks: commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){nodes{
   __typename
   ... on CheckRun{name conclusion startedAt}
 }}}}}}`;
@@ -197,13 +204,25 @@ function repoFromOrigin() {
   return m ? m[1] : null;
 }
 
-/** Reads and classifies; `gh(args) -> stdout` is injectable. */
+/**
+ * Reads and classifies; `gh(args) -> stdout` is injectable. Carries `checks`, the head commit's
+ * statusCheckRollup state, or null while no check has registered on the head.
+ */
 export function readState({ repo, number, gh }) {
   const [owner, name] = repo.split('/');
   const out = gh(['api', 'graphql', '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${number}`, '-f', `query=${QUERY}`]);
   const body = JSON.parse(out);
   if (body.errors?.length) throw new Error(body.errors.map((e) => e.message).join('; '));
-  return classify(body.data?.repository?.pullRequest);
+  const pr = body.data?.repository?.pullRequest;
+  return { ...classify(pr), checks: pr.headChecks?.nodes?.at(-1)?.commit?.statusCheckRollup?.state ?? null };
+}
+
+/**
+ * The checks token both CLI forms end with. A head with no check run yet has no rollup: that is
+ * NONE, never an omitted token, so a loop waiting for PENDING to go away does not read it as done.
+ */
+export function checksToken(s) {
+  return `checks:${s.checks ?? 'NONE'}`;
 }
 
 /**
@@ -237,7 +256,7 @@ export function readBatch({ repo, numbers, gh, ...options }) {
 
 /** One line per PR for the multi-PR read. Pure. */
 export function batchLine(s) {
-  return `#${s.number} ${s.verdict === 'missing' ? 'missing' : line(s)} checks:${s.checks ?? 'none'}`;
+  return `#${s.number} ${s.verdict === 'missing' ? 'missing' : line(s)} ${checksToken(s)}`;
 }
 
 export const DEQUEUE = 'mutation($id:ID!){dequeuePullRequest(input:{id:$id}){mergeQueueEntry{state}}}';
@@ -291,7 +310,14 @@ export function rearm({ repo, number, gh }) {
     );
   }
   gh(['pr', 'merge', '--auto', String(number), '--repo', repo]);
-  return readState({ repo, number, gh });
+  // `gh pr merge --auto` once exited 0 and left the PR unarmed: autoMergeRequest stayed null and the
+  // PR sat green and unqueued, while the bare `open` printed here read as success. Prove the arm.
+  const after = readState({ repo, number, gh });
+  if (after.auto_merge || ['queued', 'merged'].includes(after.verdict)) return after;
+  throw new Error(
+    `gh pr merge --auto returned, but the PR reads ${line(after)} with no auto-merge request, so it was NOT armed ` +
+      '(GitHub\'s read can lag its write): re-run --rearm to confirm, or check gh pr view <n> --json autoMergeRequest',
+  );
 }
 
 /**
@@ -362,7 +388,7 @@ export function main(argv, { env = process.env, gh = ghCli, stdout = process.std
     return 1;
   }
   if (flags.json) stdout.write(`${JSON.stringify(state)}\n`);
-  else stdout.write(many ? state.map((s) => `${batchLine(s)}\n`).join('') : `${line(state)}\n`);
+  else stdout.write(many ? state.map((s) => `${batchLine(s)}\n`).join('') : `${line(state)} ${checksToken(state)}\n`);
   return 0;
 }
 

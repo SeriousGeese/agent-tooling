@@ -261,7 +261,8 @@ wait_or_die() {
 
 # The PR's whole state in ONE request: scripts/pr-queue-state.mjs's GraphQL read
 # prints `merged <sha>`, `closed`, `queued <STATE> <position>`,
-# `ejected <reason> <rearmed|unarmed>`, `held <review|conflict|gate>`, `open`, or `ratelimited`.
+# `ejected <reason> <rearmed|unarmed>`, `held <review|conflict|gate>`, `open`, or `ratelimited`, then
+# (the direct read only) a trailing `checks:<rollup>` token, which the fourth variable below absorbs.
 # Sets qline (that line), verdict v1 v2, and state: MERGED (merge = the sha), CLOSED, OPEN,
 # RATELIMITED, or empty when the read failed (its stderr is shown; the PR is then waited on and
 # the cap applies).
@@ -287,7 +288,7 @@ read_pr() {
   # default `gh` made pr-queue-state run `bash gh` on Windows, which never read the PR.
   [ -n "$qline" ] || qline="$(REPO="$REPO" node "$HERE/pr-queue-state.mjs" "$PR")" || true
   verdict=""; v1=""; v2=""; merge=""
-  read -r verdict v1 v2 <<<"$qline"
+  read -r verdict v1 v2 _ <<<"$qline"
   case "$verdict" in
     merged) state=MERGED; merge="$v1" ;;
     closed) state=CLOSED ;;

@@ -134,3 +134,16 @@ test('no LOCAL.md is listed in the manifest (overlays are consumer-owned; sync n
     'manifest.json mentions LOCAL.md',
   );
 });
+
+// A lead's merge watcher exited on the absence of checks:PENDING and reported a finished run while
+// jobs were still pending: a head with no check run yet prints checks:NONE, which lacks PENDING too.
+test('the beads-bulk merge Monitor exits only on positive terminal tokens', () => {
+  const text = readFileSync(path.join(REPO, '.agents', 'skills', 'beads-bulk', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+  const monitor = text.split('\n').find((l) => l.startsWith('Track merges with a `Monitor`'));
+  assert.ok(monitor, 'the Track merges paragraph is still there');
+  assert.match(monitor, /Exit only on a positive terminal token/);
+  for (const token of ['`merged`', '`closed`', '`checks:SUCCESS`', '`checks:FAILURE`', '`checks:ERROR`', '`checks:NONE`']) {
+    assert.ok(monitor.includes(token), `names ${token}`);
+  }
+  assert.match(monitor, /never on the absence of `checks:PENDING`/);
+});
