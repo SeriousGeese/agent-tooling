@@ -166,7 +166,10 @@ exec "${realGit}" "$@"
     { mode: 0o755 },
   );
   return {
-    env: withBinFirst(ENV, binDir),
+    // The retry budget is a wall-clock deadline in the script, so on a loaded host it is a second
+    // variable in these one-retry tests; pin it to the tests' own patience, as the contention tests
+    // do. What is under test is which failures retry, not how long the budget is.
+    env: { ...withBinFirst(ENV, binDir), WORKTREE_NEW_CONFIG_RETRY_SECONDS: TEST_RETRY_SECONDS },
     calls: () => Number(readFileSync(counter, 'utf8').trim()),
   };
 }
@@ -220,10 +223,11 @@ test('a WORKTREE ADD broken by a concurrent creation is retried, not fatal', asy
       'bash',
       [script, 'raced', 'feat/raced', '--no-install'],
       { cwd: f.primary, encoding: 'utf8', env: shim.env },
-    );
+    ).catch((err) => assert.fail(`the raced creation failed (exit ${err.code}):\n${err.stdout ?? ''}\n${err.stderr ?? ''}`));
 
-    assert.match(stdout + stderr, /\(published\)/);
-    assert.equal(shim.calls(), 2, 'expected exactly one retry');
+    // The output goes into each message, so a failure on a loaded host keeps its log.
+    assert.match(stdout + stderr, /\(published\)/, `${stdout}\n${stderr}`);
+    assert.equal(shim.calls(), 2, `expected exactly one retry:\n${stdout}\n${stderr}`);
     assert.ok(existsSync(path.join(f.root, 'primary-raced')));
     // The add is the one step that runs BEFORE cleanup_partial is armed, so a
     // failure there is exactly where an orphan branch ref comes from.
