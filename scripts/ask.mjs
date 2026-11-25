@@ -46,6 +46,7 @@ import {
   resolvePerson,
 } from './ask-lib.mjs';
 import { bd as runBd, parseBdJsonRows } from './lib/bd-cli.mjs';
+import { gitCommonDir, readMachineCheckouts, readOtherRepos } from './ask-repos.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SYNC_HELPER = path.join(HERE, 'bd-dolt-sync.mjs');
@@ -125,6 +126,11 @@ export function defaultDeps() {
     actor: () => resolveActorId(),
     env: process.env,
     people: undefined,
+    // The other checkouts on this machine (scripts/ask-repos.mjs). A deps object without these
+    // reads this repository alone, as before.
+    machine: () => readMachineCheckouts(),
+    otherRepos: (personKey, checkouts, now) =>
+      readOtherRepos({ personKey, checkouts, selfCommonDir: gitCommonDir(process.cwd()), now }),
     now: () => new Date(),
     log: (line) => console.log(line),
     warn: (line) => console.warn(line),
@@ -298,21 +304,53 @@ function cmdList(deps, { forKey = '', json = false } = {}) {
   }
 
   const asks = fetchAsks(deps, person.key);
+  const others = fetchOtherRepos(deps, person.key);
 
   if (json) {
-    deps.log(JSON.stringify({ person: person.key, count: asks.length, asks }, null, 2));
+    const out = { person: person.key, count: asks.length, asks };
+    if (others) Object.assign(out, others.error ? { othersError: others.error } : { others: others.repos });
+    deps.log(JSON.stringify(out, null, 2));
     return;
   }
 
   if (!asks.length) {
     deps.log(`No beads are waiting on ${person.display}. All clear.`);
+  } else {
+    const noun = asks.length === 1 ? 'bead is' : 'beads are';
+    deps.log(`${asks.length} ${noun} waiting on ${person.display}:\n`);
+    for (const ask of asks) deps.log(`${formatDetail(ask)}\n`);
+    deps.log('Run /asks to walk through these and decide on each one.');
+  }
+  if (others) logOtherRepos(deps, person, others);
+}
+
+/**
+ * The other configured checkouts' asks for this person, read now (this is the interactive list,
+ * not SessionStart), or null when the machine file lists none.
+ */
+function fetchOtherRepos(deps, personKey) {
+  if (typeof deps.machine !== 'function') return null;
+  const { checkouts, error } = deps.machine();
+  if (error) return { error, repos: [] };
+  if (!checkouts.length) return null;
+  return { error: null, repos: deps.otherRepos(personKey, checkouts, deps.now()) };
+}
+
+function logOtherRepos(deps, person, { error, repos }) {
+  if (error) {
+    deps.warn(`[ask] ${String(error).replace(/\s+/g, ' ').trim()}; asks in other checkouts are not shown.`);
     return;
   }
-
-  const noun = asks.length === 1 ? 'bead is' : 'beads are';
-  deps.log(`${asks.length} ${noun} waiting on ${person.display}:\n`);
-  for (const ask of asks) deps.log(`${formatDetail(ask)}\n`);
-  deps.log('Run /asks to walk through these and decide on each one.');
+  for (const r of repos) {
+    if (r.error) {
+      deps.warn(`[ask] ${r.repo}: ${r.error}; skipped.`);
+      continue;
+    }
+    if (!r.asks.length) continue;
+    const noun = r.asks.length === 1 ? 'bead is' : 'beads are';
+    deps.log(`\n[${r.repo}] ${r.asks.length} ${noun} waiting on ${person.display} in ${r.path} (act on them from there):\n`);
+    for (const ask of r.asks) deps.log(`${formatDetail(ask)}\n`);
+  }
 }
 
 // ── argv ──────────────────────────────────────────────────────────────────────

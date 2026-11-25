@@ -20,6 +20,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COPIED = [
   'ask.mjs',
   'ask-lib.mjs',
+  'ask-repos.mjs',
   'agent-actor-id.mjs',
   'agent-tooling-config.mjs',
   'lib/bd-cli.mjs',
