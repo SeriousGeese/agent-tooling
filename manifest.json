@@ -70,6 +70,7 @@
       "scripts/test-support/oddity-gh-stub.mjs"
     ],
     "worktree": [
+      "scripts/bd-retry.node-test.mjs",
       "scripts/claim-age.mjs",
       "scripts/claim-age.node-test.mjs",
       "scripts/claim-worktree-first.node-test.mjs",
@@ -77,6 +78,7 @@
       "scripts/land.node-test.mjs",
       "scripts/land.sh",
       "scripts/lib/agent-config.sh",
+      "scripts/lib/bd-retry.sh",
       "scripts/lib/git-no-fsmonitor.sh",
       "scripts/lib/to-node-path-probe.mjs",
       "scripts/lib/to-node-path.sh",

@@ -49,7 +49,7 @@ let tmp, origin, checkout, stubBin;
 // What claim.sh runs against: itself, the worktree half, the 4h check, and (from the base and
 // beads sets) the actor id, the verified sync and the config loader every script reads.
 const CLAIM_SCRIPTS = ['claim.sh', 'claim-age.mjs', 'worktree-new.sh', 'agent-actor-id.mjs', 'bd-dolt-sync.mjs', 'agent-tooling-config.mjs'];
-const CLAIM_LIBS = ['to-node-path.sh', 'git-no-fsmonitor.sh', 'agent-config.sh'];
+const CLAIM_LIBS = ['to-node-path.sh', 'git-no-fsmonitor.sh', 'agent-config.sh', 'bd-retry.sh'];
 
 /** The stub bd-dolt-sync.mjs must spawn from `dir`: Node cannot run the extensionless one on Windows. */
 const bdCliIn = (dir) => path.join(dir, IS_WINDOWS ? 'bd.cmd' : 'bd');
@@ -301,6 +301,10 @@ test('--in-place still refuses to run off main, the one mode that branches this 
  * A `bd` whose `show` prints `issueJson` and whose every call is logged, so both halves of the
  * fresh-claim refusal are observable: what the script said, and that it never reached `update`.
  * The `.cmd` sibling is the one the Node-side sync spawns on Windows (it only needs to succeed).
+ *
+ * A `@AGO:<seconds>` in the JSON becomes an ISO time that many seconds before the `show` call
+ * itself, not before the fixture was built: claim.sh runs the actor check and the sync first, which
+ * on a loaded host took long enough that a claim stamped "1 hour ago" at build time read "1h 1m ago".
  */
 function showBin(tag, issueJson) {
   const dir = path.join(tmp, `bin-${tag}`);
@@ -309,7 +313,7 @@ function showBin(tag, issueJson) {
   const bashLog = log.replace(/\\/g, '/');
   fs.writeFileSync(
     path.join(dir, 'bd'),
-    `#!/usr/bin/env bash\necho "$*" >> "${bashLog}"\nif [ "$1" = "show" ]; then\ncat <<'JSON'\n${issueJson}\nJSON\nfi\nexit 0\n`,
+    `#!/usr/bin/env bash\necho "$*" >> "${bashLog}"\nif [ "$1" = "show" ]; then\ncat <<'JSON' | node -e 'let s="";process.stdin.on("data",(d)=>{s+=d;}).on("end",()=>{process.stdout.write(s.replace(/@AGO:(\\d+)/g,(_,n)=>new Date(Date.now()-Number(n)*1000).toISOString()));})'\n${issueJson}\nJSON\nfi\nexit 0\n`,
     { mode: 0o755 },
   );
   if (process.platform === 'win32') {
@@ -319,14 +323,17 @@ function showBin(tag, issueJson) {
   return { dir, calls };
 }
 
+// The age is resolved when the stub's `show` runs (see showBin), so the claim's age is measured from the
+// lookup claim.sh makes, whatever the host load before it.
 const heldBy = (id, assignee, hoursAgo, status = 'in_progress') =>
-  JSON.stringify([{ id, assignee, status, started_at: new Date(Date.now() - hoursAgo * 3_600_000).toISOString() }]);
+  JSON.stringify([{ id, assignee, status, started_at: `@AGO:${Math.round(hoursAgo * 3600)}` }]);
 
 test('refuses another actor\'s claim under 4h old: nothing is claimed or published', { skip: SKIP }, () => {
   const bin = showBin('fresh', heldBy('bd-fresh', 'other-bot-bbbbbbbb', 1));
   const r = claim(['bd-fresh', '--claim-only'], {}, bin.dir);
   assert.equal(r.status, 1, `expected a refusal:\n${r.stdout}\n${r.stderr}`);
-  assert.match(r.stderr, /refusing to claim bd-fresh: it is held by "other-bot-bbbbbbbb", claimed 1 hour ago/);
+  // claim-age rounds to the minute; a minute of drift between the lookup and the check is load, not a bug.
+  assert.match(r.stderr, /refusing to claim bd-fresh: it is held by "other-bot-bbbbbbbb", claimed 1 (?:hour|h [1-5]m) ago/);
   assert.match(r.stderr, /AGENT_TOOLING_ALLOW_CLAIM_STEAL=1 bash scripts\/claim\.sh bd-fresh/);
   const calls = bin.calls();
   assert.ok(calls.some((c) => c.startsWith('show bd-fresh')), `the lookup must have run:\n${calls.join('\n')}`);

@@ -109,6 +109,14 @@ reason, when `bd-dolt-sync.mjs` is absent. If `claim-age.mjs` crashes (any exit 
 the claim proceeds and a stderr warning says the fresh-claim check did not run. The creation scripts need only git, bash and node; every config
 read degrades to the defaults when `node` or the config module is absent.
 
+**The beads database lock.** The embedded Dolt database is single-writer, so with many sessions on one checkout
+family a `bd` call can fail at once on another process's lock. Every `bd` call claim.sh makes goes through
+`lib/bd-retry.sh` (`bd_retry`), and `bd-dolt-sync.mjs` (the `beads` set) wraps its bd and dolt calls the same way:
+a failure that names the lock is retried, bounded, with one stderr line per wait; any other failure returns at
+once. Knobs: `AGENT_TOOLING_BD_LOCK_ATTEMPTS` (default 8, `1` disables) and `AGENT_TOOLING_BD_LOCK_DELAY_SECONDS`
+(a fixed wait; default a 2, 3, 5, 8 second ladder, about 40 s in all). claim.sh pulls the primary's main with
+`git pull --no-rebase`, so a global `pull.rebase=true` cannot break it.
+
 **Removal, session locks and landing.** `worktree-rm.sh` removes one literal worktree path and refuses a
 primary checkout, the caller's own cwd, a dirty tree and (through `session-lock.mjs`) a worktree another
 live agent session is in; `--force-live-session` overrides the last. Its `--stale` mode lists removal
