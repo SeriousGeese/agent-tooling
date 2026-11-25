@@ -570,8 +570,17 @@ if [ -n "$(git -C "$TARGET_ABS" status --porcelain 2>/dev/null)" ]; then
     echo "  --force given: discarding the changes above."
   fi
 fi
-BR="$(git -C "$TARGET_ABS" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
-if [ -n "$BR" ] && [ "$BR" != "HEAD" ]; then
+# The branch, read BEFORE anything is removed, through symbolic-ref and never
+# `rev-parse --abbrev-ref HEAD`: once the branch ref itself is gone (deleted after its merge
+# while the worktree still had it checked out) rev-parse prints the literal `HEAD`, and the
+# cleanup hint at the end told an operator to run `git push origin --delete HEAD`. Empty on a
+# detached HEAD. BR_LOCAL says whether the local ref still exists, which decides both the
+# upstream warnings (they read the ref) and which cleanup commands the hint prints.
+BR="$(git -C "$TARGET_ABS" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+[ "$BR" != "HEAD" ] || BR=""
+BR_LOCAL=0
+if [ -n "$BR" ] && git -C "$TARGET_ABS" show-ref --verify --quiet "refs/heads/$BR"; then BR_LOCAL=1; fi
+if [ "$BR_LOCAL" = "1" ]; then
   case "$(upstream_state "$TARGET_ABS" "$BR")" in
     never-pushed)
       echo "WARNING: branch '$BR' has never been pushed: its commits exist ONLY here." ;;
@@ -800,5 +809,13 @@ if [ -n "$ALREADY_GONE" ]; then
   fi
 fi
 
-echo "The branch itself is untouched: delete it separately if the PR is merged:"
-echo "  git branch -D ${BR:-<branch>}   &&   git push origin --delete ${BR:-<branch>}"
+if [ -z "$BR" ]; then
+  echo "The worktree was on a detached HEAD, so there is no branch to name. If it had one and the PR is merged:"
+  echo "  git branch -D <branch>   &&   git push origin --delete <branch>"
+elif [ "$BR_LOCAL" = "1" ]; then
+  echo "The branch itself is untouched: delete it separately if the PR is merged:"
+  echo "  git branch -D $BR   &&   git push origin --delete $BR"
+else
+  echo "The local branch '$BR' was already deleted. If the PR is merged and its remote branch remains:"
+  echo "  git push origin --delete $BR"
+fi
