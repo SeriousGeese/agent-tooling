@@ -232,6 +232,68 @@ test('a target neither git nor rm can delete is removed through PowerShell, and 
   }
 });
 
+// The cleanup hint once printed `git branch -D HEAD && git push origin --delete HEAD` after the
+// long-path fallback: the branch ref was already gone, and `rev-parse --abbrev-ref HEAD` answers the
+// literal `HEAD` then. The name is read through symbolic-ref before anything is removed.
+const NO_HEAD_HINT = /branch -D HEAD|--delete HEAD/;
+test('the cleanup hint names the real branch, read before removal; never HEAD', () => {
+  const f = fixtureWithWorktrees();
+  try {
+    const r = runRm(f.work, f.wtA);
+    assert.equal(r.status, 0, `${r.out}\n${r.err}`);
+    assert.match(r.out, /git branch -D feat\/a {3}&& {3}git push origin --delete feat\/a\n/);
+    assert.doesNotMatch(r.out, NO_HEAD_HINT);
+  } finally {
+    removeTempDir(f.root, 'worktree-rm.node-test');
+  }
+});
+
+function runRmWith(cwd, env, ...args) {
+  try {
+    const out = execFileSync('bash', [script, ...args], { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] });
+    return { status: 0, out, err: '' };
+  } catch (e) {
+    return { status: e.status, out: String(e.stdout ?? ''), err: String(e.stderr ?? '') };
+  }
+}
+
+test('a branch ref deleted before removal still names the branch, through the long-path fallback too', () => {
+  const f = fixtureWithWorktrees();
+  try {
+    git(f.work, 'update-ref', '-d', 'refs/heads/feat/a');
+    // The precondition the old read tripped on: rev-parse now answers HEAD for this worktree.
+    assert.equal(spawnSync('git', ['-C', f.wtA, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8', env: ENV }).stdout.trim(), 'HEAD');
+    const { env, marker } = longPathStubs(f.root, 'wt-a');
+    // With its ref gone the HEAD is unborn, so every tracked file reads as staged: --force.
+    const r = runRmWith(f.work, env, f.wtA, '--force');
+    assert.equal(r.status, 0, `${r.out}\n${r.err}`);
+    assert.ok(existsSync(marker), `the fallback path ran:\n${r.out}`);
+    assert.match(r.out, /The local branch 'feat\/a' was already deleted/);
+    assert.match(r.out, /git push origin --delete feat\/a\n/);
+    assert.doesNotMatch(r.out, /git branch -D/, 'no delete of a local branch that is not there');
+    assert.doesNotMatch(r.out, NO_HEAD_HINT);
+    assert.doesNotMatch(r.out, /never been pushed/, 'no upstream warning read off a ref that is gone');
+  } finally {
+    removeTempDir(f.root, 'worktree-rm.node-test');
+  }
+});
+
+test('a detached worktree through the long-path fallback prints the <branch> placeholder, never HEAD', () => {
+  const f = fixtureWithWorktrees();
+  try {
+    git(f.wtA, 'checkout', '-q', '--detach');
+    const { env, marker } = longPathStubs(f.root, 'wt-a');
+    const r = runRm(f.work, f.wtA, env);
+    assert.equal(r.status, 0, `${r.out}\n${r.err}`);
+    assert.ok(existsSync(marker), `the fallback path ran:\n${r.out}`);
+    assert.match(r.out, /detached HEAD, so there is no branch to name/);
+    assert.match(r.out, /git branch -D <branch> {3}&& {3}git push origin --delete <branch>/);
+    assert.doesNotMatch(r.out, NO_HEAD_HINT);
+  } finally {
+    removeTempDir(f.root, 'worktree-rm.node-test');
+  }
+});
+
 test('a target spelled with 8.3 short names is the same registered worktree as git long spelling', (t) => {
   const f = fixtureWithWorktrees();
   try {
