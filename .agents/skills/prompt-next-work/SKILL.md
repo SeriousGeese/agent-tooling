@@ -61,11 +61,12 @@ Consequences the generated prompt MUST state:
   `in_progress` claim (`cannot reassign <id>: held by "<writer>" (in_progress)`), and the
   writing session cannot pre-assign them because it cannot know the next session's id. The
   takeover is `bd update <id> -a "$(node scripts/agent-actor-id.mjs)" --if-assignee
-  "<writer actor>" --force`: `--force` lifts the live-claim refusal, and `--if-assignee` makes
-  the write happen only while the bead is still held by the session that wrote this prompt, so
-  it can never take a bead from anyone else (a mismatch writes nothing and exits 13). That is a
-  hand-over the holder asked for in writing, not a steal, and it is the only `--force` the
-  prompt may use.
+  "<writer actor>"`, with NO `--force`: `--if-assignee` is the guard bd accepts for reassigning
+  a live claim, and it makes the write happen only while the bead is still held by the session
+  that wrote this prompt, so it can never take a bead from anyone else (a mismatch writes nothing
+  and exits 13). That is a hand-over the holder asked for in writing, not a steal. bd 1.3.x
+  rejects `--if-assignee` together with `--force` before writing anything ("if any flags in the
+  group [force if-assignee] are set none of the others can be"), so never add `--force` to it.
 
 ## Procedure
 
@@ -475,10 +476,11 @@ Never set `AGENT_TOOLING_ALLOW_CLAIM_STEAL=1` here.
 
 Instead:
 - Take them over in **First moves**, right after the start marker: the guarded
-  `bd update <id> -a <you> --if-assignee "<actor-id>" --force` there hands each bead from this
-  session to yours. A plain `-a` is refused while they are held, and `--claim` is refused by the
-  age check; the guarded `--force` is the one sanctioned way. Exit 13 on a bead means someone
-  else holds it now: stop and tell the user.
+  `bd update <id> -a <you> --if-assignee "<actor-id>"` there (no `--force`) hands each bead from
+  this session to yours. A plain `-a` is refused while they are held, and `--claim` is refused by
+  the age check; the `--if-assignee` guard is the one sanctioned way. Exit 13 on a bead means
+  someone else holds it now; any other non-zero exit is bd rejecting the command itself. Either
+  way, stop and tell the user which one it was.
 - Worktree: `bash scripts/worktree-new.sh <slug> <branch>` (publishes the branch, installs deps
   in the background; `bash scripts/worktree-new.sh --await <slug>` before any gate).
 
@@ -566,31 +568,44 @@ this out literally, with the ids and the writing session's actor id filled in:
 
 ```bash
 node scripts/bd-dolt-sync.mjs pull
-taken=""; refused=""
+me="$(node scripts/agent-actor-id.mjs)"
+taken=""; refused=""; failed=""
 for id in <id-1> <id-2>; do
-  if bd update "$id" -a "$(node scripts/agent-actor-id.mjs)" --if-assignee "<writer actor id>" --force; then
+  rc=0
+  bd update "$id" -a "$me" --if-assignee "<writer actor id>" || rc=$?
+  if [ "$rc" -eq 0 ]; then
     taken="$taken $id"
+  elif [ "$rc" -eq 13 ]; then
+    refused="$id"; break   # held by someone else now; later beads are not touched
   else
-    refused="$id"; break   # the first refusal ends the takeover; later beads are not touched
+    failed="$id (bd exit $rc)"; break   # bd rejected the COMMAND (a flag or tooling error), not the holder
   fi
 done
-# Push even after a refusal, so the tracker shows exactly which beads this session now holds.
+# Push even after a stop, so the tracker shows exactly which beads this session now holds.
 node scripts/bd-dolt-sync.mjs push && node scripts/bd-dolt-sync.mjs pull
 bd show <id-1> <id-2> --json   # verify: every taken bead's assignee is now this session's actor id
-[ -z "$refused" ] || echo "TAKEOVER STOPPED at $refused. Taken:${taken:- none}. STOP: no worktree, no gate, no watcher; tell the user."
+[ -z "$refused" ] || echo "TAKEOVER STOPPED at $refused: someone else holds it now (exit 13). Taken:${taken:- none}. STOP: no worktree, no gate, no watcher; tell the user."
+[ -z "$failed" ] || echo "TAKEOVER FAILED at $failed: bd refused the command itself (see its error above), NOT a holder. Taken:${taken:- none}. STOP: no worktree, no gate, no watcher; tell the user bd's error."
 ```
 
-- **Why `--force`, and why it is safe here.** bd refuses a reassignment of another actor's live
-  `in_progress` claim unless forced, and the writing session cannot hand the beads over itself
+- **Why `--if-assignee` alone, and why it is safe here.** A plain `-a` is refused on another
+  actor's live `in_progress` claim, and the writing session cannot hand the beads over itself
   because the next session's actor id does not exist until that session starts. `--if-assignee`
-  pins the write to the writing session's claim: if anyone else holds the bead by now, nothing is
-  written and bd exits 13. Never drop `--if-assignee` from this command, and never use `--force`
-  anywhere else in a handoff.
-- **Exit 13 (or any refusal): stop the whole handoff.** The loop breaks at the first refusal, so
-  no later bead is touched, and the push records only the beads already taken. After a
-  `TAKEOVER STOPPED` line, create no worktree, run no gate and start no watcher. Do not retry with
-  a different `--if-assignee`. Report the taken and refused beads, and let the user decide
-  whether to release the taken ones (`bd update <id> --status open -a ""`) or carry on with them.
+  lifts that refusal only for the named holder, which pins the write to the writing session's
+  claim: if anyone else holds the bead by now, nothing is written and bd exits 13. Never drop
+  `--if-assignee` from this command. Never add `--force`: bd rejects the pair as a flag-group
+  error before writing, which once made every takeover stop on a bead nobody else held. Never
+  use `--force` anywhere else in a handoff either.
+- **Tell the two stops apart.** Exit 13 (`TAKEOVER STOPPED`) is the guard working: someone else
+  holds that bead now. Any other non-zero exit (`TAKEOVER FAILED`, a flag-usage error is exit 1)
+  is bd rejecting the command: nobody holds the bead against you, so say so and quote bd's error,
+  never "someone else has it".
+- **Either stop ends the whole handoff.** The loop breaks at the first one, so no later bead is
+  touched, and the push records only the beads already taken. After a `TAKEOVER STOPPED` or
+  `TAKEOVER FAILED` line, create no worktree, run no gate and start no watcher. Do not retry with a
+  different `--if-assignee` or with `--force`. Report the taken and stopped beads, and let the
+  user decide whether to release the taken ones (`bd update <id> --status open -a ""`) or carry on
+  with them.
 - **Take over before `git pull`, worktrees and watchers**, so the tracker says who holds the
   work for the whole time the work happens. Add a `bd note` per bead naming the prompt path in
   the same push, so the trail reads: claimed for a handoff, then taken over by the session that
