@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { buildPeople } from '../ask-lib.mjs';
-import { buildInboxBanner } from './ask-inbox.mjs';
+import { buildInboxBanner, buildSessionBanner } from './ask-inbox.mjs';
 
 const HOOK = fileURLToPath(new URL('./ask-inbox.mjs', import.meta.url));
 const NOW = new Date('2026-08-22T12:00:00Z');
@@ -99,4 +99,84 @@ test('as a process: exits 0 and prints nothing when bd is absent and nobody is c
   });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '');
+});
+
+// Other checkouts (scripts/ask-repos.mjs): the banner shows their asks from a cache, never a scan.
+const otherRepo = { repo: 'repo-b', path: '/w/repo-b', error: null, asks: [{ id: 'rb-7', title: 'Name the release', status: 'open', by: 'bob', age: '3d ago', repo: 'repo-b', path: '/w/repo-b' }] };
+const NOW_MS = NOW.getTime();
+
+/** buildSessionBanner deps over the local stub, with a machine file, a cache and a recorded refresh. */
+function session({ checkouts = [{ repo: 'repo-b', path: '/w/repo-b' }], error = null, cached = { person: 'alice', repos: [otherRepo], mtime: NOW_MS - 2 * 60_000 }, lockMtime = null, ...rest } = {}) {
+  const base = deps(rest);
+  const started = [];
+  return {
+    ...base,
+    started,
+    deps: {
+      ...base.deps,
+      machine: () => ({ checkouts, error }),
+      commonDir: () => '/w/self/.git',
+      cache: () => cached,
+      lockMtime: () => lockMtime,
+      start: (dir, person) => started.push([dir, person]),
+      nowMs: NOW_MS,
+    },
+  };
+}
+
+test('with no other checkouts configured the banner is exactly what it was', () => {
+  const s = session({ checkouts: [] });
+  assert.equal(buildSessionBanner(s.deps), buildInboxBanner(deps().deps));
+  assert.deepEqual(s.started, []);
+});
+
+test('other checkouts come from the cache after this repo, tagged with repo and path; still ONE bd call', () => {
+  const s = session();
+  const banner = buildSessionBanner(s.deps);
+  assert.deepEqual(s.labels, ['ask-alice'], 'the only bd call is this repository\'s');
+  assert.deepEqual(s.started, [], 'a fresh cache starts no refresh');
+  const lines = banner.split('\n');
+  assert.match(lines[0], /^\[asks\] 1 bead is waiting on YOU \(alice\):/);
+  assert.ok(lines.indexOf('[asks] Run /asks to review them.') < lines.findIndex((l) => l.includes('other checkouts:')));
+  assert.match(banner, /\[asks\] 1 bead is waiting on YOU \(alice\) in other checkouts:\n\[asks\] {3}rb-7 {2}Name the release {2}\[repo-b: \/w\/repo-b\] {2}\(asked by bob, 3d ago\)/);
+  assert.match(banner, /other checkouts read 2m ago/);
+
+  // Nothing here, something there: the other checkouts still show.
+  const elsewhere = session({ payload: '[]' });
+  assert.match(buildSessionBanner(elsewhere.deps), /^\[asks\] 1 bead is waiting on YOU \(alice\) in other checkouts:/);
+});
+
+test('a stale, missing or someone-else\'s cache starts ONE detached refresh and shows what it has', () => {
+  const stale = session({ cached: { person: 'alice', repos: [otherRepo], mtime: NOW_MS - 60 * 60_000 } });
+  assert.match(buildSessionBanner(stale.deps), /rb-7/, 'the old answer still shows');
+  assert.deepEqual(stale.started, [['/w/self/.git', 'alice']]);
+
+  const missing = session({ cached: null });
+  assert.doesNotMatch(buildSessionBanner(missing.deps), /other checkouts/);
+  assert.deepEqual(missing.started, [['/w/self/.git', 'alice']]);
+
+  const bobs = session({ cached: { person: 'bob', repos: [otherRepo], mtime: NOW_MS } });
+  assert.doesNotMatch(buildSessionBanner(bobs.deps), /rb-7/, "never another person's asks");
+  assert.equal(bobs.started.length, 1);
+
+  const locked = session({ cached: null, lockMtime: NOW_MS - 1000 });
+  buildSessionBanner(locked.deps);
+  assert.deepEqual(locked.started, [], 'a refresh already running is not started twice');
+});
+
+test('a missing checkout is one line; an unreadable machine file is one line; neither is fatal', () => {
+  const gone = session({ cached: { person: 'alice', repos: [{ repo: 'gone', path: '/w/gone', asks: [], error: 'checkout /w/gone not found' }], mtime: NOW_MS } });
+  assert.match(buildSessionBanner(gone.deps), /\n\[asks\] gone: checkout \/w\/gone not found; skipped\./);
+  const bad = session({ checkouts: [], error: '/h/.seriousgeese/agent-tooling.json is not valid JSON (x)' });
+  const banner = buildSessionBanner(bad.deps);
+  assert.match(banner, /\n\[asks\] \/h\/\.seriousgeese\/agent-tooling\.json is not valid JSON \(x\); asks in other checkouts are not shown\.$/);
+  assert.deepEqual(bad.started, []);
+});
+
+test('an unrecognised contributor reads no machine file and starts nothing', () => {
+  const s = session({ actorBase: 'someone-new' });
+  let read = false;
+  s.deps.machine = () => { read = true; return { checkouts: [], error: null }; };
+  assert.equal(buildSessionBanner(s.deps), '');
+  assert.equal(read, false);
 });

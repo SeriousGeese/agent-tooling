@@ -110,6 +110,8 @@ function harness({ beads = [], syncOk = { pull: true, push: true }, actorBase = 
     },
     gitEmail: () => '',
     actor: () => ({ base: actorBase }),
+    // This repository alone: a machine file on the test host must not change what list prints.
+    machine: () => ({ checkouts: [], error: null }),
     env,
     people: PEOPLE,
     now: () => FIXED_NOW,

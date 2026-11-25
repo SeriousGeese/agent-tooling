@@ -30,6 +30,8 @@
       "scripts/ask-config-error.node-test.mjs",
       "scripts/ask-lib.mjs",
       "scripts/ask-lib.node-test.mjs",
+      "scripts/ask-repos.mjs",
+      "scripts/ask-repos.node-test.mjs",
       "scripts/ask-sync.node-test.mjs",
       "scripts/ask.mjs",
       "scripts/hooks/ask-inbox.mjs",
