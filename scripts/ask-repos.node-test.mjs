@@ -8,10 +8,13 @@ import path from 'node:path';
 
 import { buildPeople } from './ask-lib.mjs';
 import { main as askMain } from './ask.mjs';
+import { BD_MAX_BUFFER } from './lib/bd-cli.mjs';
 import {
+  BD_TIMEOUT_MS,
   CACHE_NAME,
   LOCK_NAME,
   REFRESH_AFTER_MS,
+  bdListIn,
   formatOtherRepos,
   machineConfigPath,
   needsRefresh,
@@ -105,6 +108,36 @@ test('two other repos are read and tagged; this repo (by common dir), a missing 
   assert.match(lines[4], /^\[asks\] broken: its tracker could not be read/);
   assert.equal(lines.at(-1), '[asks] (other checkouts read 5m ago; run /asks from that checkout to act on one)');
   assert.deepEqual(formatOtherRepos([{ repo: 'x', path: '/x', asks: [], error: null }], ALICE), [], 'nothing to say: no lines');
+});
+
+test('bdListIn reads through the shared bd caller with its own timeout; a failure names its cause, not the command', () => {
+  let seen;
+  const out = bdListIn('/w/repo-a', 'ask-alice', { exec: (cmd, args, opts) => { seen = { cmd, args, opts }; return '[]'; } });
+  assert.equal(out, '[]');
+  assert.equal(seen.cmd, 'bd');
+  assert.deepEqual(seen.args, ['-C', '/w/repo-a', 'list', '--label', 'ask-alice', '--all', '--json', '-n', '0']);
+  assert.equal(seen.opts.timeout, BD_TIMEOUT_MS);
+  assert.equal(BD_TIMEOUT_MS, 30_000);
+  assert.equal(seen.opts.maxBuffer, BD_MAX_BUFFER);
+  assert.equal(seen.opts.windowsHide, true);
+
+  const errorFor = (thrown) => readOtherRepos({
+    personKey: 'alice',
+    checkouts: [{ repo: 'repo-a', path: '/w/repo-a' }],
+    selfCommonDir: '/w/self/.git',
+    now: NOW,
+    exists: () => true,
+    commonDirOf: () => '/w/repo-a/.git',
+    bdList: (checkout, label) => bdListIn(checkout, label, { exec: () => { throw thrown; } }),
+  })[0].error;
+  assert.equal(
+    errorFor(Object.assign(new Error('spawnSync bd ETIMEDOUT'), { code: 'ETIMEDOUT' })),
+    'its tracker could not be read (spawnSync bd ETIMEDOUT)',
+  );
+  assert.equal(
+    errorFor(Object.assign(new Error('Command failed: bd -C /w/repo-a list'), { stderr: 'Error: no beads database found\nmore' })),
+    'its tracker could not be read (Error: no beads database found)',
+  );
 });
 
 test('the cache: a refresh writes it whole under a lock; needsRefresh reads its age, its person and the lock', (t) => {

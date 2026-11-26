@@ -218,6 +218,23 @@ test('falls back to <base>-bot-<session8> on every miss', () => {
   }
 });
 
+// Only a MISSING file is no sessions file. One that exists and cannot be read must not pass for one:
+// the id would lose its name and its process anchor, so this session's own claims would read as
+// another session's. Malformed contents stay a plain miss (the case above).
+test('a sessions file that exists but cannot be read throws, and is never read as absent', () => {
+  for (const code of ['EACCES', 'EPERM', 'EISDIR', 'EIO']) {
+    const readSessionFile = (file) => {
+      throw Object.assign(new Error(`${code}: failed, open '${file}'`), { code });
+    };
+    assert.throws(
+      () => resolveActorId({ env: claudeEnv, gitUserName: gitName('Bob'), readSessionFile }),
+      (err) => err.code === code && /cannot read the Claude Code sessions file .*847250\.json/.test(err.message),
+      code,
+    );
+    assert.throws(() => claudeSessionName(claudeEnv, readSessionFile), { code }, `claudeSessionName, ${code}`);
+  }
+});
+
 test('reads no sessions file without CLAUDE_PID, or under Codex', () => {
   const refuse = () => { throw new Error('must not read'); };
   assert.equal(resolveActorId({ env: { CLAUDE_CODE_SESSION_ID: SID }, gitUserName: gitName('Bob'), readSessionFile: refuse }).id, 'bob-bot-c54b71a9');
@@ -260,6 +277,20 @@ test('--check passes for the new format, read from a real sessions file', () => 
     const stale = cli({ CLAUDE_CODE_SESSION_ID: '0fc812d7-0000', CLAUDE_PID: '847250', CLAUDE_CONFIG_DIR: dir });
     assert.equal(stale.status, 0, stale.stderr);
     assert.equal(stale.stdout, 'cli-probe-bot-0fc812d7');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--check refuses, printing no id, when the sessions file exists but cannot be read', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'actor-id-'));
+  try {
+    // A directory where the file belongs: EISDIR on every platform, unlike permission bits.
+    mkdirSync(path.join(dir, 'sessions', '847250.json'), { recursive: true });
+    const r = cli({ CLAUDE_CODE_SESSION_ID: SID, CLAUDE_PID: '847250', CLAUDE_CONFIG_DIR: dir });
+    assert.equal(r.status, 1, r.stderr);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, /agent-actor-id: cannot resolve an actor identity: cannot read the Claude Code sessions file .*847250\.json: EISDIR/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

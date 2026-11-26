@@ -16,23 +16,26 @@ export const BD_MAX_BUFFER = 64 * 1024 * 1024;
 
 /**
  * Run `bd <args>` and return its stdout. A failure throws an Error naming the command and
- * bd's stderr, unless `allowFailure` is set, in which case it returns ''.
- * `exec` is injectable for tests; it defaults to execFileSync.
+ * bd's stderr (the spawn's own error is its `cause`), unless `allowFailure` is set, in which
+ * case it returns ''. `timeout` defaults to BD_TIMEOUT_MS; a caller that reads several trackers
+ * in a row passes a shorter one. `windowsHide` keeps a detached caller (a background refresh) from
+ * flashing a console window per call. `exec` is injectable for tests; it defaults to execFileSync.
  */
-export function bd(args, { allowFailure = false, exec = execFileSync } = {}) {
+export function bd(args, { allowFailure = false, exec = execFileSync, timeout = BD_TIMEOUT_MS } = {}) {
   try {
     return exec('bd', args, {
       encoding: 'utf8',
-      timeout: BD_TIMEOUT_MS,
+      timeout,
       maxBuffer: BD_MAX_BUFFER,
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
     });
   } catch (error) {
     if (allowFailure) return '';
     const detail = String(error?.stderr || error?.message || error).trim();
     // `stderr` travels separately so a caller can read bd's OWN words without the command line,
     // whose arguments (a close reason, say) are caller data.
-    throw Object.assign(new Error(`bd ${args.join(' ')}\n  ${detail}`), { stderr: String(error?.stderr ?? '') });
+    throw Object.assign(new Error(`bd ${args.join(' ')}\n  ${detail}`, { cause: error }), { stderr: String(error?.stderr ?? '') });
   }
 }
 
