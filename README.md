@@ -35,7 +35,7 @@ argv splitter). Everything else is in a named set, chosen with
 
 | Set | Contents |
 |---|---|
-| `asks` | Routing a bead to a person for a decision: ask.mjs, the inbox banner. A malformed `agent-tooling.json` is reported (ask.mjs errors and exits non-zero, the banner prints one `[asks]` line and exits 0) instead of reading as an empty routing table; a missing one stays silent |
+| `asks` | Routing a bead to a person for a decision: ask.mjs, the inbox banner, and `ask-repos.mjs`, which adds the asks of the other checkouts listed in the per-machine `~/.seriousgeese/agent-tooling.json` (`{"checkouts": {"<repo>": "<path>"}}`; `AGENT_TOOLING_MACHINE_CONFIG` overrides the path), each tagged with its repo and path. `ask.mjs list` reads them directly; the banner reads a cache in the git common dir and refreshes it in the background when it is over 15 minutes old, so session start still makes one `bd` call. A missing checkout is one line, never fatal; with no machine file nothing changes. A malformed `agent-tooling.json` is reported (ask.mjs errors and exits non-zero, the banner prints one `[asks]` line and exits 0) instead of reading as an empty routing table; a missing one stays silent |
 | `beads` | The Dolt-backed beads sync toolkit: verified pull/push (bd-dolt-sync), bd repo-churn guard, sync-remote drift check (finds the embedded database from a linked worktree via the git common dir), resilient-pull shell lib |
 | `hygiene` | Epic hygiene, idea inbox, tooling-friction log, blocker-chain finder (`bead-chains.mjs`; its repo label is `--repo-label`, else `AGENT_TOOLING_REPO_LABEL`, else `repo:<origin basename>`, else the lower-cased `beadPrefix`; if none, every `repo:*` label counts as another repository) |
 | `worktree` | claim.sh and its fresh-claim guard (claim-age), worktree creation with `--await`, the per-worktree dev server and port, safe removal with the `--stale` scan (worktree-rm), session locks, and land.sh. See [The worktree set](#the-worktree-set) |
@@ -108,6 +108,14 @@ before touching `bd`, naming the missing file and the set that ships it, so adop
 reason, when `bd-dolt-sync.mjs` is absent. If `claim-age.mjs` crashes (any exit other than its refusal code 3),
 the claim proceeds and a stderr warning says the fresh-claim check did not run. The creation scripts need only git, bash and node; every config
 read degrades to the defaults when `node` or the config module is absent.
+
+**The beads database lock.** The embedded Dolt database is single-writer, so with many sessions on one checkout
+family a `bd` call can fail at once on another process's lock. Every `bd` call claim.sh makes goes through
+`lib/bd-retry.sh` (`bd_retry`), and `bd-dolt-sync.mjs` (the `beads` set) wraps its bd and dolt calls the same way:
+a failure that names the lock is retried, bounded, with one stderr line per wait; any other failure returns at
+once. Knobs: `AGENT_TOOLING_BD_LOCK_ATTEMPTS` (default 8, `1` disables) and `AGENT_TOOLING_BD_LOCK_DELAY_SECONDS`
+(a fixed wait; default a 2, 3, 5, 8 second ladder, about 40 s in all). claim.sh pulls the primary's main with
+`git pull --no-rebase`, so a global `pull.rebase=true` cannot break it.
 
 **Removal, session locks and landing.** `worktree-rm.sh` removes one literal worktree path and refuses a
 primary checkout, the caller's own cwd, a dirty tree and (through `session-lock.mjs`) a worktree another

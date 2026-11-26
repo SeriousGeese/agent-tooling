@@ -147,3 +147,31 @@ test('the beads-bulk merge Monitor exits only on positive terminal tokens', () =
   }
   assert.match(monitor, /never on the absence of `checks:PENDING`/);
 });
+
+// A handoff's takeover combined --if-assignee with --force, which bd 1.3.x rejects as a flag-group error
+// before writing; the loop read that as "someone else holds it" for a bead nobody else held.
+test('prompt-next-work takes beads over with --if-assignee alone and tells a refusal from a command error', () => {
+  const text = readFileSync(path.join(REPO, '.agents', 'skills', 'prompt-next-work', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+  const takeovers = text.split('\n').filter((l) => /bd update\b.*--if-assignee/.test(l));
+  assert.ok(takeovers.length >= 2, 'the takeover command is still written out');
+  // The command itself: from `bd update` to the end of its code span (or line).
+  for (const l of takeovers) {
+    const command = /bd update[^`]*/.exec(l)[0];
+    assert.doesNotMatch(command, /--force/, `never --force beside --if-assignee: ${command}`);
+  }
+  const block = text.slice(text.indexOf('### Take the beads over'), text.indexOf('### Watchers start first'));
+  assert.match(block, /elif \[ "\$rc" -eq 13 \]; then/, 'exit 13 is the refusal');
+  assert.match(block, /TAKEOVER STOPPED at \$refused: someone else holds it now \(exit 13\)/);
+  assert.match(block, /TAKEOVER FAILED at \$failed: bd refused the command itself/);
+});
+
+// A print-mode worker started its gate in the background and ended its turn to wait; the process exited
+// with no commit and no PR.
+test('beads-bulk tells print-mode workers to run everything in the foreground, and documents resumable claude -p workers', () => {
+  const text = readFileSync(path.join(REPO, '.agents', 'skills', 'beads-bulk', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+  const must = text.slice(text.indexOf('### Every implementation-subagent prompt MUST include'));
+  assert.match(must, /When the worker runs as `claude -p` \(print mode\)[^\n]*Run every command in the foreground/);
+  assert.match(text, /\*\*The parallel option for such a lead: `claude -p` workers\.\*\*/);
+  assert.match(text, /claude -p --resume <session_id>/);
+  assert.match(text, /--output-format stream-json/);
+});

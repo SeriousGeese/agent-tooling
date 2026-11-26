@@ -42,6 +42,8 @@ source "$SCRIPT_DIR/lib/to-node-path.sh"
 # The repository's own names (here: the claim helper's path, for the hints below).
 source "$SCRIPT_DIR/lib/agent-config.sh"
 agent_config_load
+# bd_retry: every bd call below waits out another session's hold on the beads database.
+source "$SCRIPT_DIR/lib/bd-retry.sh"
 # Native `node` (not bash) needs a Windows-native path on a host where MSYS's
 # automatic argument conversion is off: SCRIPT_DIR's POSIX form otherwise
 # resolves as C:\c\... instead of C:\... . Bash/git subcommands
@@ -163,9 +165,19 @@ if [[ "$CLAIM_ONLY" != "1" ]]; then
   # Only meaningful when this checkout is on main; the worktree path bases on a freshly
   # fetched origin/main inside worktree-new.sh, and pulling main into a feature branch
   # here would merge it into the invoking checkout as a side effect.
+  #
+  # --no-rebase, never the user's pull.rebase: with pull.rebase=true in a global gitconfig the bare
+  # `git pull origin main` failed "Cannot rebase onto multiple branches", and the workaround that
+  # worked was pull.rebase=false, which is this flag. (--ff-only does NOT help: git refuses it at
+  # the same multiple-heads check.) The primary's main carries nothing of its own, so in practice
+  # this is a fast-forward.
   if [[ "$CURRENT_BRANCH" == "main" ]]; then
     echo "Pulling latest main..."
-    git pull origin main
+    if ! git pull --no-rebase origin main; then
+      echo "ERROR: could not pull origin/main into this checkout's main (see git's message above). Nothing was claimed." >&2
+      echo "  Look at: git status, and git log --oneline origin/main..main   (main should carry nothing of its own)" >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -185,7 +197,7 @@ node "$NODE_SCRIPT_DIR/bd-dolt-sync.mjs" pull
 # (default 4); AGENT_TOOLING_ALLOW_CLAIM_STEAL=1 is a deliberate takeover. Fails open on an
 # unreadable lookup.
 CLAIM_AGE_RC=0
-bd show "$ISSUE_ID" --json 2>/dev/null | node "$NODE_SCRIPT_DIR/claim-age.mjs" "$ISSUE_ID" --actor "${BEADS_ACTOR:-}" || CLAIM_AGE_RC=$?
+bd_retry --no-bd-stderr show "$ISSUE_ID" --json | node "$NODE_SCRIPT_DIR/claim-age.mjs" "$ISSUE_ID" --actor "${BEADS_ACTOR:-}" || CLAIM_AGE_RC=$?
 if [[ "$CLAIM_AGE_RC" == "3" ]]; then
   exit 1
 elif [[ "$CLAIM_AGE_RC" != "0" ]]; then
@@ -200,7 +212,7 @@ fi
 # when the bead is not in_progress. An in_progress bead held by someone else is a
 # live claim, and deciding whether to steal it belongs to the age check above, not
 # to a helper that quietly blanks the field.
-CLAIM_STATE="$(bd show "$ISSUE_ID" --json 2>/dev/null | node -e '
+CLAIM_STATE="$(bd_retry --no-bd-stderr show "$ISSUE_ID" --json | node -e '
   let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
     try {
       const j = JSON.parse(s); const o = Array.isArray(j) ? j[0] : (j.issues ? j.issues[0] : j);
@@ -211,11 +223,11 @@ CLAIM_STATUS="${CLAIM_STATE%%	*}"
 CLAIM_ASSIGNEE="${CLAIM_STATE#*	}"
 if [[ -n "$CLAIM_ASSIGNEE" && "$CLAIM_STATUS" != "in_progress" && "$CLAIM_ASSIGNEE" != "${BEADS_ACTOR:-}" ]]; then
   echo "Clearing stale attribution '$CLAIM_ASSIGNEE' (bead is '$CLAIM_STATUS', not in_progress)..."
-  bd update "$ISSUE_ID" -a ""
+  bd_retry update "$ISSUE_ID" -a ""
 fi
 
 echo "Claiming $ISSUE_ID..."
-bd update "$ISSUE_ID" --claim
+bd_retry update "$ISSUE_ID" --claim
 
 # A rejection here means another session pushed between our pull and this push: routine
 # under concurrency and self-healing, so the helper pulls and retries once rather than

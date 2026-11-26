@@ -415,7 +415,10 @@ Each item was probed in an isolated `bd init` workspace; re-verify before buildi
 - **`bd show <id> --as-of origin/main` reads the remote's copy** after a `dolt fetch`, without the
   `dolt sql ... AS OF` recipe.
 - **`--if-assignee` and `--if-status` make an update conditional.** A mismatch writes nothing and
-  exits 13, so a script can release a claim without racing the holder.
+  exits 13, so a script can release a claim without racing the holder. `--if-assignee` alone also
+  reassigns another actor's live claim when it names that actor; never pair it with `--force`:
+  bd 1.3.x rejects the pair as a flag-group error (exit 1, not 13) before writing anything, so a
+  script that reads every non-zero exit as "held by someone else" draws the wrong conclusion.
 - **`bd unclaim` refuses anyone but the holder, and a session's actor is not your git name.** Pass
   `--actor "$(node scripts/agent-actor-id.mjs)"`, or park with `bd update <id> --status open -a ""`.
   Both clear the lease.

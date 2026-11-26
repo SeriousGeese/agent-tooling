@@ -562,19 +562,75 @@ export function spawnWithShellFallback(cmd, args, opts = {}) {
   };
 }
 
+/**
+ * The embedded Dolt database is single-writer, and every bd and dolt process takes its lock. With
+ * many sessions on one checkout family a call failed AT ONCE with a Windows file-lock message
+ * ("another process has locked a portion of the file", "share access flags are incompatible")
+ * that reads like a broken database; every such call succeeded within ten attempts a few seconds
+ * apart. scripts/lib/bd-retry.sh carries the same pattern for the shell callers; keep them in step.
+ * `cannot update manifest: database is read only` is NOT here: doltFetch already retries it, and
+ * matching it here too would nest one ladder inside the other.
+ *
+ * A lock failure is immediate, so a retried call costs only the waits: 2+3+5+8+8+8+8 s, about 40 s
+ * at worst, the same order as the push ladder above, which is what a shared single-job CI runner
+ * can afford. AGENT_TOOLING_BD_LOCK_ATTEMPTS lowers it where that matters.
+ */
+export const BD_LOCK_PATTERN =
+  /another process has locked a portion of the file|being used by another process|share access flags are incompatible|database is locked|locked by another (dolt|bd) process|fslock/i;
+export const LOCK_ATTEMPTS = 8;
+export const LOCK_BACKOFF_MS = [2000, 3000, 5000, 8000];
+
+/** The lock retry's knobs: AGENT_TOOLING_BD_LOCK_ATTEMPTS and a fixed AGENT_TOOLING_BD_LOCK_DELAY_SECONDS. */
+export function lockRetryOptions(env = process.env) {
+  const attempts = Number.parseInt(env.AGENT_TOOLING_BD_LOCK_ATTEMPTS ?? '', 10);
+  const delay = Number(env.AGENT_TOOLING_BD_LOCK_DELAY_SECONDS ?? '');
+  return {
+    attempts: Number.isSafeInteger(attempts) && attempts >= 1 ? attempts : LOCK_ATTEMPTS,
+    backoffMs: env.AGENT_TOOLING_BD_LOCK_DELAY_SECONDS != null && Number.isFinite(delay) && delay >= 0 ? [delay * 1000] : LOCK_BACKOFF_MS,
+  };
+}
+
+/**
+ * Wraps a `run(cmd, args, opts)` so a bd or dolt call that failed on the database lock is retried,
+ * bounded, with one line per wait naming the cause. Any other failure, and a timed-out call (it may
+ * have held the lock itself), returns at once. A lock failure means the command never got to
+ * write, so running it again is safe.
+ */
+export function lockRetrying(run, { sleep, warn, attempts = LOCK_ATTEMPTS, backoffMs = LOCK_BACKOFF_MS }) {
+  return (cmd, args, opts) => {
+    for (let attempt = 1; ; attempt += 1) {
+      const r = run(cmd, args, opts);
+      const locked = r.status !== 0 && !r.timedOut && BD_LOCK_PATTERN.test(`${r.stderr}\n${r.stdout}`);
+      if (!locked) return r;
+      const what = [cmd, ...(args ?? []).slice(0, 2)].join(' ');
+      if (attempt >= attempts) {
+        warn(`${what}: the beads database was still locked by another bd/dolt process after ${attempt} attempt(s); another session's bd is running: try again shortly`);
+        return r;
+      }
+      const ms = backoffMs[Math.min(attempt - 1, backoffMs.length - 1)];
+      warn(`${what}: the beads database is locked by another bd/dolt process (attempt ${attempt}/${attempts}); retrying in ${ms / 1000}s`);
+      sleep(ms);
+    }
+  };
+}
+
+// Synchronous on purpose - the whole module is spawnSync-shaped so callers can treat it as
+// one blocking gate.
+const sleepSync = (ms) => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+const warnLine = (...a) => console.warn(...a);
+
 export const DEFAULT_DEPS = {
   // The no-shell-first / win32-shell-fallback dance is shared with
-  // bd-repo-guard.mjs and epic-hygiene.mjs - `spawnWithShellFallback` above.
-  run: spawnWithShellFallback,
+  // bd-repo-guard.mjs and epic-hygiene.mjs - `spawnWithShellFallback` above. Wrapped so a call
+  // that lost the database lock to another session's bd waits it out (lockRetrying).
+  run: lockRetrying(spawnWithShellFallback, { sleep: sleepSync, warn: warnLine, ...lockRetryOptions() }),
   log: (...a) => console.log(...a),
-  warn: (...a) => console.warn(...a),
+  warn: warnLine,
   exists: (p) => fs.existsSync(p),
   cwd: () => process.cwd(),
-  // Synchronous on purpose - the whole module is spawnSync-shaped so callers can treat it as
-  // one blocking gate.
-  sleep: (ms) => {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-  },
+  sleep: sleepSync,
 };
 
 function findDoltDir(deps) {

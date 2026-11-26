@@ -27,6 +27,10 @@ import {
   classifyConflicts,
   parseJsonRows,
   spawnWithShellFallback,
+  BD_LOCK_PATTERN,
+  LOCK_ATTEMPTS,
+  lockRetrying,
+  lockRetryOptions,
 } from './bd-dolt-sync.mjs';
 import { removeTempDir } from './test-support/cleanup.mjs';
 
@@ -1225,4 +1229,66 @@ test('real dolt: a double close that ALSO changed the title is left standing', (
     assert.ok(logs.some((l) => /dolt conflicts resolve --theirs issues/.test(l)), logs.join('\n'));
     assert.equal(count('select count(*) as c from dolt_conflicts_issues'), 1, 'nothing was resolved');
   });
+});
+
+// Eleven sessions on one checkout family shared one embedded Dolt database; bd and the sync failed AT
+// ONCE on its lock with a message that read like a broken database, and every call succeeded within
+// ten attempts a few seconds apart.
+test('lockRetrying waits out the database lock, bounded, one line per wait; any other failure returns at once', () => {
+  const LOCKED = 'Error: The process cannot access the file because another process has locked a portion of the file.';
+  const script = (...results) => {
+    const calls = [];
+    return { calls, run: (cmd, args) => { calls.push([cmd, ...args]); return results[Math.min(calls.length - 1, results.length - 1)]; } };
+  };
+  const io = () => { const s = { slept: [], warned: [] }; return { s, sleep: (ms) => s.slept.push(ms), warn: (m) => s.warned.push(m) }; };
+
+  // Locked twice, then through: the third attempt's answer, two waits, two lines naming the cause.
+  let fake = script({ status: 1, stdout: '', stderr: LOCKED }, { status: 1, stdout: '', stderr: 'share access flags are incompatible' }, { status: 0, stdout: 'ok', stderr: '' });
+  let t = io();
+  let r = lockRetrying(fake.run, { sleep: t.sleep, warn: t.warn, attempts: 5, backoffMs: [10, 20] })('bd', ['dolt', 'pull']);
+  assert.equal(r.status, 0);
+  assert.equal(fake.calls.length, 3);
+  assert.deepEqual(t.s.slept, [10, 20]);
+  assert.equal(t.s.warned.length, 2);
+  assert.match(t.s.warned[0], /^bd dolt pull: the beads database is locked by another bd\/dolt process \(attempt 1\/5\); retrying in 0\.01s$/);
+
+  // Bounded: after the last attempt it returns the lock failure and says so.
+  fake = script({ status: 1, stdout: '', stderr: LOCKED });
+  t = io();
+  r = lockRetrying(fake.run, { sleep: t.sleep, warn: t.warn, attempts: 3, backoffMs: [0] })('bd', ['update', 'x-1', '--claim']);
+  assert.equal(r.status, 1);
+  assert.equal(fake.calls.length, 3);
+  assert.match(t.s.warned.at(-1), /still locked by another bd\/dolt process after 3 attempt\(s\)/);
+
+  // A real error, a success and a timed-out push are never retried.
+  for (const once of [
+    { status: 1, stdout: '', stderr: 'Error: no issue found matching "x-9"' },
+    { status: 0, stdout: 'database is locked (just text in a note)', stderr: '' },
+    { status: 1, stdout: '', stderr: LOCKED, timedOut: true },
+  ]) {
+    fake = script(once);
+    t = io();
+    lockRetrying(fake.run, { sleep: t.sleep, warn: t.warn, attempts: 5, backoffMs: [0] })('bd', ['dolt', 'push']);
+    assert.equal(fake.calls.length, 1, JSON.stringify(once));
+    assert.deepEqual(t.s.warned, []);
+  }
+
+  for (const msg of [LOCKED, 'The process cannot access the file because it is being used by another process.', 'share access flags are incompatible', 'database is locked', 'the database is locked by another dolt process', 'fslock: lock held']) {
+    assert.match(msg, BD_LOCK_PATTERN, msg);
+  }
+  assert.doesNotMatch('Error: merge conflicts in issues require operator resolution', BD_LOCK_PATTERN);
+  // doltFetch retries this one itself; matching it here would nest one ladder inside the other.
+  assert.doesNotMatch('cannot update manifest: database is read only', BD_LOCK_PATTERN);
+
+  assert.deepEqual(lockRetryOptions({}), { attempts: LOCK_ATTEMPTS, backoffMs: [2000, 3000, 5000, 8000] });
+  assert.deepEqual(lockRetryOptions({ AGENT_TOOLING_BD_LOCK_ATTEMPTS: '3', AGENT_TOOLING_BD_LOCK_DELAY_SECONDS: '0' }), { attempts: 3, backoffMs: [0] });
+  assert.equal(lockRetryOptions({ AGENT_TOOLING_BD_LOCK_ATTEMPTS: 'x' }).attempts, LOCK_ATTEMPTS);
+});
+
+// The shell callers (claim.sh) carry the same pattern in scripts/lib/bd-retry.sh, when that set is here.
+test('lib/bd-retry.sh matches the same lock messages as BD_LOCK_PATTERN', (t) => {
+  const lib = path.join(path.dirname(fileURLToPath(import.meta.url)), 'lib', 'bd-retry.sh');
+  if (!fs.existsSync(lib)) { t.skip('scripts/lib/bd-retry.sh is not vendored here (the worktree set)'); return; }
+  const shell = /^BD_LOCK_RE='([^']*)'$/m.exec(fs.readFileSync(lib, 'utf8'))?.[1];
+  assert.equal(shell, BD_LOCK_PATTERN.source, 'keep the two patterns in step');
 });
