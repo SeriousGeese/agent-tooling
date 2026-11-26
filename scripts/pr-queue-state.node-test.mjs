@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { batchQuery, classify, DEQUEUE, dequeue, line, main as stateMain, needsBash, prWorkflowFile, gateCheckName, QUERY, readState, readStates, rearm } from './pr-queue-state.mjs';
+import { batchLine, batchQuery, checksToken, classify, DEQUEUE, dequeue, line, main as stateMain, needsBash, prWorkflowFile, gateCheckName, QUERY, readState, readStates, rearm } from './pr-queue-state.mjs';
 
 // The module reads the consumer-prefixed PR workflow and gate check names from the environment
 // (default pr.yml / gate), and a consumer sets them for its own workflow names (for example in a
@@ -107,7 +107,7 @@ test('the CLI prints one line or JSON; 1 on a read failure, 2 on usage', () => {
   const io = { stdout: { write: (s) => { out += s; } }, stderr: { write: () => {} } };
   const gh = () => JSON.stringify({ data: { repository: { pullRequest: node({ mergeQueueEntry: { state: 'QUEUED', position: 4 } }) } } });
   assert.equal(stateMain(['7', '--repo', 'o/r'], { gh, ...io }), 0);
-  assert.equal(out, 'queued QUEUED 4\n');
+  assert.equal(out, 'queued QUEUED 4 checks:NONE\n', 'a head with no check run yet says so, never a bare verdict');
   out = '';
   assert.equal(stateMain(['7', '--json'], { env: { REPO: 'o/r' }, gh, ...io }), 0);
   assert.equal(JSON.parse(out).queue.position, 4);
@@ -136,7 +136,7 @@ test('several PRs are one aliased GraphQL read: a line each with the check rollu
   assert.equal(calls.length, 1, 'one request for three PRs');
   const query = calls[0].find((a) => a.startsWith('query='));
   for (const n of [7, 8, 9]) assert.match(query, new RegExp(`p${n}: pullRequest\\(number:${n}\\)\\{`));
-  assert.equal(out, '#7 queued QUEUED 2 checks:PENDING\n#8 merged abc checks:SUCCESS\n#9 missing checks:none\n');
+  assert.equal(out, '#7 queued QUEUED 2 checks:PENDING\n#8 merged abc checks:SUCCESS\n#9 missing checks:NONE\n');
   out = '';
   assert.equal(stateMain(['7', '8', '--json'], { env: { REPO: 'o/r' }, gh, ...io }), 0);
   assert.deepEqual(JSON.parse(out).map((s) => [s.number, s.verdict, s.checks]), [[7, 'queued', 'PENDING'], [8, 'merged', 'SUCCESS']]);
@@ -176,7 +176,7 @@ test('--dequeue takes a queued PR out by its node id, and proves it by reading a
     return JSON.stringify({ data: { repository: { pullRequest: left ? node({ id: 'PR_kw7', ...removed('manual') }) : queued } } });
   };
   assert.equal(stateMain(['7', '--dequeue', '--repo', 'o/r'], { gh, ...io }), 0);
-  assert.equal(out.text, 'ejected manual unarmed\n');
+  assert.equal(out.text, 'ejected manual unarmed checks:NONE\n');
   const mutation = calls.find((args) => args.includes(`query=${DEQUEUE}`));
   assert.deepEqual(mutation.slice(0, 4), ['api', 'graphql', '-f', 'id=PR_kw7']);
   assert.equal(calls.length, 3, 'read, dequeue, read again');
@@ -212,7 +212,7 @@ test('--rearm arms only once pr.yml has a run for the current head', () => {
 
   const ready = fake(1);
   assert.equal(stateMain(['7', '--rearm', '--repo', 'o/r'], { gh: ready.gh, ...io }), 0);
-  assert.equal(out.text, 'ejected failed_checks rearmed\n');
+  assert.equal(out.text, 'ejected failed_checks rearmed checks:NONE\n');
   assert.equal(ready.calls[1][1], 'repos/o/r/actions/workflows/pr.yml/runs?head_sha=abc123def456&event=pull_request&per_page=1');
   assert.deepEqual(ready.calls[2], ['pr', 'merge', '--auto', '7', '--repo', 'o/r']);
 
@@ -239,14 +239,16 @@ test('--rearm refuses a draft, and a PR whose ready_for_review run has not start
   const io = { stdout: { write: (s) => { out.text += s; } }, stderr: { write: (s) => { out.err += s; } } };
   const fake = ({ isDraft = false, readyAt = null, runCreatedAt = null }) => {
     const calls = [];
+    let armed = false;
     const gh = (args) => {
       calls.push(args);
-      if (args[0] === 'pr') return '';
+      if (args[0] === 'pr') { armed = true; return ''; }
       if (args[0] === 'api' && args[1].startsWith('repos/')) {
         return JSON.stringify({ total_count: 1, workflow_runs: runCreatedAt ? [{ created_at: runCreatedAt }] : [] });
       }
       const readyEvents = { nodes: readyAt ? [{ createdAt: readyAt }] : [] };
-      return JSON.stringify({ data: { repository: { pullRequest: node({ headRefOid: 'abc123def456', isDraft, readyEvents }) } } });
+      const autoMergeRequest = armed ? { enabledAt: 't' } : null;
+      return JSON.stringify({ data: { repository: { pullRequest: node({ headRefOid: 'abc123def456', isDraft, readyEvents, autoMergeRequest }) } } });
     };
     return { gh, calls };
   };
@@ -274,6 +276,77 @@ test('--rearm refuses a draft, and a PR whose ready_for_review run has not start
   assert.ok(armed(neverDraft));
 
   assert.match(QUERY, /readyEvents: timelineItems\(last:1,itemTypes:\[READY_FOR_REVIEW_EVENT\]\)/);
+});
+
+// `--rearm` once printed a bare `open` and exited 0 after a merge-queue ejection while
+// autoMergeRequest stayed null: the PR sat green and unqueued until a second --rearm.
+test('--rearm proves the arm: an arm that did not take exits 1 with nothing on stdout', () => {
+  const out = { text: '', err: '' };
+  const io = { stdout: { write: (s) => { out.text += s; } }, stderr: { write: (s) => { out.err += s; } } };
+  const fake = (after) => {
+    const calls = [];
+    let sent = false;
+    const gh = (args) => {
+      calls.push(args);
+      if (args[0] === 'pr') { sent = true; return ''; }
+      if (args[0] === 'api' && args[1].startsWith('repos/')) return JSON.stringify({ total_count: 1, workflow_runs: [{ created_at: '2026-11-11T10:00:00Z' }] });
+      const pr = sent ? after : node({ headRefOid: 'abc123def456', ...removed('failed_checks') });
+      return JSON.stringify({ data: { repository: { pullRequest: pr } } });
+    };
+    return { gh, calls };
+  };
+
+  // gh pr merge --auto answered, but the read after it is still unarmed: plain open, or ejected unarmed.
+  for (const after of [node({ headRefOid: 'abc123def456' }), node({ headRefOid: 'abc123def456', ...removed('failed_checks') })]) {
+    out.text = ''; out.err = '';
+    const f = fake(after);
+    assert.equal(stateMain(['7', '--rearm', '--repo', 'o/r'], { gh: f.gh, ...io }), 1);
+    assert.equal(out.text, '', 'no verdict on stdout that a caller could read as success');
+    assert.match(out.err, /could not rearm PR #7: gh pr merge --auto returned, but the PR reads (open|ejected failed_checks unarmed) with no auto-merge request, so it was NOT armed/);
+    assert.ok(f.calls.some((args) => args[0] === 'pr'), 'the arm was sent');
+    assert.ok(f.calls.at(-1)[1] === 'graphql', 'and the state read again after it');
+    assert.throws(() => rearm({ repo: 'o/r', number: 7, gh: fake(after).gh }), /NOT armed/);
+  }
+
+  // Armed, or straight into the queue (autoMergeRequest reads null once queued), or merged: success.
+  for (const [after, printed] of [
+    [node({ headRefOid: 'abc123def456', autoMergeRequest: { enabledAt: 't' } }), 'open checks:NONE'],
+    [node({ headRefOid: 'abc123def456', mergeQueueEntry: { state: 'QUEUED', position: 1 }, ...added }), 'queued QUEUED 1 checks:NONE'],
+    [node({ state: 'MERGED', mergeCommit: { oid: 'm1' } }), 'merged m1 checks:NONE'],
+  ]) {
+    out.text = '';
+    assert.equal(stateMain(['7', '--rearm', '--repo', 'o/r'], { gh: fake(after).gh, ...io }), 0, printed);
+    assert.equal(out.text, `${printed}\n`);
+  }
+});
+
+// A wait loop exited on the absence of checks:PENDING while six jobs were still pending: right
+// after a push the head had no check run, and the one-PR line carried no checks token at all.
+test('the one-PR line ends with the check rollup, NONE before any check registers; both forms agree', () => {
+  const rollup = (state) => ({ headChecks: { nodes: [{ commit: { statusCheckRollup: state ? { state, contexts: { nodes: [] } } : null } }] } });
+  const read = (over) => {
+    let out = '';
+    const io = { stdout: { write: (s) => { out += s; } }, stderr: { write: () => {} } };
+    const gh = () => JSON.stringify({ data: { repository: { pullRequest: node({ headRefOid: 'h1', ...over }) } } });
+    assert.equal(stateMain(['7', '--repo', 'o/r'], { gh, ...io }), 0);
+    return out;
+  };
+  assert.equal(read({}), 'open checks:NONE\n', 'no headChecks at all');
+  assert.equal(read(rollup(null)), 'open checks:NONE\n', 'a head commit with no rollup yet');
+  assert.equal(read(rollup('PENDING')), 'open checks:PENDING\n');
+  assert.equal(read(rollup('SUCCESS')), 'open checks:SUCCESS\n');
+  assert.equal(read({ ...removed('failed_checks'), autoMergeRequest: { enabledAt: 't' }, ...rollup('FAILURE') }), 'ejected failed_checks rearmed checks:FAILURE\n');
+  assert.equal(readState({ repo: 'o/r', number: 7, gh: () => JSON.stringify({ data: { repository: { pullRequest: node(rollup('ERROR')) } } }) }).checks, 'ERROR');
+  assert.match(QUERY, /headChecks: commits\(last:1\)\{nodes\{commit\{statusCheckRollup\{state contexts/);
+  // The words a shell caller splits keep their places: the token is always last.
+  const [verdict, v1, v2, rest] = read({ ...removed('failed_checks'), autoMergeRequest: { enabledAt: 't' } }).trim().split(' ');
+  assert.deepEqual([verdict, v1, v2, rest], ['ejected', 'failed_checks', 'rearmed', 'checks:NONE']);
+  // The JSON answer carries it too, null before any check.
+  let json = '';
+  stateMain(['7', '--json', '--repo', 'o/r'], { gh: () => JSON.stringify({ data: { repository: { pullRequest: node() } } }), stdout: { write: (s) => { json += s; } }, stderr: { write: () => {} } });
+  assert.equal(JSON.parse(json).checks, null);
+  assert.equal(checksToken({ checks: null }), 'checks:NONE');
+  assert.equal(batchLine({ number: 3, verdict: 'open', checks: null }), '#3 open checks:NONE');
 });
 
 // A landing script exported GH_CLI=gh, and on Windows `bash gh` ran gh.exe as a script.
