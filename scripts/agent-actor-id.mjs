@@ -292,9 +292,12 @@ export function isOldFormatOfSameSession(holder, me) {
  * (`win-3c`), slugified; '' when it cannot be read with confidence.
  *
  * Read from `~/.claude/sessions/<CLAUDE_PID>.json`, which Claude Code writes per running session.
- * The file is UNDOCUMENTED harness state, so it is read defensively: a missing or unparsable file,
- * no name, or a `sessionId` that is not this session's (a stale file, a reused pid) all read as no
- * name. `CLAUDE_CONFIG_DIR` relocates the directory, as it does for Claude Code itself.
+ * The file is UNDOCUMENTED harness state, so its CONTENTS are read defensively: a missing file
+ * (ENOENT), unparsable contents, no name, or a `sessionId` that is not this session's (a stale file,
+ * a reused pid) all read as no name. A file that exists but cannot be READ (EACCES, EISDIR, EIO) is
+ * thrown, never read as absent: that would quietly drop the name and the process anchor and so change
+ * this session's actor id mid-run, and its own claims would then read as another session's.
+ * `CLAUDE_CONFIG_DIR` relocates the directory, as it does for Claude Code itself.
  *
  * The name is stable across `/clear` while the session id is not, and it is two hex characters,
  * so it recurs over time: that is why a session suffix stays on the id after it.
@@ -304,16 +307,29 @@ export function claudeSessionName(env = process.env, readSessionFile = readTextF
   return parsed && typeof parsed.name === 'string' ? slugifyActorBase(parsed.name) : '';
 }
 
-/** This session's parsed sessions file, or null on any miss (see claudeSessionName). */
+/**
+ * This session's parsed sessions file, or null when there is none or it is not this session's (see
+ * claudeSessionName). Throws when the file exists and cannot be read.
+ */
 function readClaudeSession(env, readSessionFile) {
   const pid = String(env.CLAUDE_PID ?? '').trim();
   const sessionId = String(env.CLAUDE_CODE_SESSION_ID ?? '').trim();
   if (!/^\d+$/.test(pid) || !sessionId) return null;
+  const file = path.join(claudeConfigDir(env), 'sessions', `${pid}.json`);
+  let text;
+  try {
+    text = readSessionFile(file);
+  } catch (err) {
+    // Only a missing file is "no sessions file". Anything else is a filesystem failure, which must
+    // not pass for one: see claudeSessionName.
+    if (err?.code === 'ENOENT') return null;
+    throw Object.assign(new Error(`cannot read the Claude Code sessions file ${file}: ${err?.message ?? err}`, { cause: err }), { code: err?.code });
+  }
   let parsed;
   try {
-    parsed = JSON.parse(readSessionFile(path.join(claudeConfigDir(env), 'sessions', `${pid}.json`)));
+    parsed = JSON.parse(text);
   } catch {
-    return null;
+    return null; // Malformed contents: undocumented harness state, so no name (see claudeSessionName).
   }
   if (!parsed || typeof parsed !== 'object' || parsed.sessionId !== sessionId) return null;
   return parsed;
@@ -336,7 +352,14 @@ function readGitUserName() {
 }
 
 if (isMain()) {
-  const resolved = resolveActorId();
+  let resolved;
+  try {
+    resolved = resolveActorId();
+  } catch (err) {
+    // No id at all rather than a different one: claim.sh's --check gate then refuses to claim.
+    process.stderr.write(`agent-actor-id: cannot resolve an actor identity: ${err?.message ?? err}\n`);
+    process.exit(1);
+  }
   if (process.argv.includes('--check')) {
     if (!resolved.distinct) {
       process.stderr.write(`${sharedIdentityMessage(resolved)}\n`);

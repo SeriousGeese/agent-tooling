@@ -25,7 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { askLabel, parseAsks } from './ask-lib.mjs';
-import { parseBdJsonRows } from './lib/bd-cli.mjs';
+import { bd, parseBdJsonRows } from './lib/bd-cli.mjs';
 
 export const MACHINE_CONFIG_REL = path.join('.seriousgeese', 'agent-tooling.json');
 export const CACHE_NAME = 'agent-tooling-asks-other-repos.json';
@@ -34,7 +34,10 @@ export const LOCK_NAME = 'agent-tooling-asks-other-repos.lock';
 export const REFRESH_AFTER_MS = 15 * 60 * 1000;
 /** Longer than a scan can run, so a lock this old belonged to a process that died. */
 export const LOCK_EXPIRES_MS = 10 * 60 * 1000;
-/** One bd call per checkout; bd serializes on its database lock, so a slow one is contention. */
+/**
+ * One bd call per checkout; bd serializes on its database lock, so a slow one is contention. Shorter
+ * than lib/bd-cli.mjs's default because a scan reads several trackers in a row.
+ */
 export const BD_TIMEOUT_MS = 30_000;
 
 /** The per-machine file: AGENT_TOOLING_MACHINE_CONFIG, else ~/.seriousgeese/agent-tooling.json. */
@@ -104,15 +107,12 @@ export function normalise(p, platform = process.platform) {
   return platform === 'win32' ? s.toLowerCase() : s;
 }
 
-/** `bd -C <checkout> list --label ask-<person> --all --json -n 0`, as text. */
-export function bdListIn(checkout, label) {
-  return execFileSync('bd', ['-C', checkout, 'list', '--label', label, '--all', '--json', '-n', '0'], {
-    encoding: 'utf8',
-    timeout: BD_TIMEOUT_MS,
-    maxBuffer: 64 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
+/**
+ * `bd -C <checkout> list --label ask-<person> --all --json -n 0`, as text, through the one shared
+ * bd caller (lib/bd-cli.mjs: maxBuffer, windowsHide) with this file's timeout. `exec` is for tests.
+ */
+export function bdListIn(checkout, label, { exec } = {}) {
+  return bd(['-C', checkout, 'list', '--label', label, '--all', '--json', '-n', '0'], { timeout: BD_TIMEOUT_MS, exec });
 }
 
 /**
@@ -148,7 +148,9 @@ export function readOtherRepos({
       const asks = parseAsks(rows, personKey, { now }).map((a) => ({ ...a, repo, path: checkout }));
       out.push({ repo, path: checkout, asks, error: null });
     } catch (err) {
-      const why = String(err?.stderr || err?.message || err).trim().split(/\r?\n/)[0].slice(0, 160);
+      // bd's own words first; else the spawn's error (a timeout, no bd on PATH), which lib/bd-cli.mjs
+      // keeps as `cause` behind a message that starts with the command line.
+      const why = String(err?.stderr || err?.cause?.message || err?.message || err).trim().split(/\r?\n/)[0].slice(0, 160);
       out.push({ repo, path: checkout, asks: [], error: `its tracker could not be read (${why})` });
     }
   }

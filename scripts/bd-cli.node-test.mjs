@@ -29,6 +29,10 @@ describe('bd-cli', () => {
     assert.equal(seen.opts.maxBuffer, BD_MAX_BUFFER);
     assert.ok(BD_MAX_BUFFER >= 64 * 1024 * 1024);
     assert.equal(seen.opts.timeout, BD_TIMEOUT_MS);
+    assert.equal(seen.opts.windowsHide, true, 'a detached caller must not flash a console window per call');
+    bd(['list'], { timeout: 5_000, exec: (cmd, args, opts) => { seen = { cmd, args, opts }; return ''; } });
+    assert.equal(seen.opts.timeout, 5_000, 'a caller may shorten the timeout');
+    assert.equal(seen.opts.maxBuffer, BD_MAX_BUFFER, 'and keeps the maxBuffer backstop');
   });
 
   test('a failure names the command and stderr, unless allowFailure', () => {
@@ -39,6 +43,8 @@ describe('bd-cli', () => {
     };
     assert.throws(() => bd(['show', 'X'], { exec }), /bd show X\n {2}database locked/);
     assert.equal(bd(['show', 'X'], { exec, allowFailure: true }), '');
+    const timedOut = Object.assign(new Error('spawnSync bd ETIMEDOUT'), { code: 'ETIMEDOUT' });
+    assert.throws(() => bd(['list'], { exec: () => { throw timedOut; } }), (err) => err.cause === timedOut && err.stderr === '', 'the spawn error is the cause');
   });
 
   test('parseBdJsonRows accepts every shape bd emits', () => {
@@ -76,12 +82,14 @@ describe('bd-cli', () => {
   // is how one of them once lacked the maxBuffer backstop.
   test('callers import the shared helper and define no bd() of their own', () => {
     const stripComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
-    for (const file of ['ask.mjs', 'hygiene-bd-lib.mjs', 'bead-chains.mjs']) {
+    for (const file of ['ask.mjs', 'ask-repos.mjs', 'hygiene-bd-lib.mjs', 'bead-chains.mjs']) {
       const abs = path.join(HERE, file);
       if (!existsSync(abs)) continue;
       const src = stripComments(readFileSync(abs, 'utf8'));
       assert.ok(/from '\.\/lib\/bd-cli\.mjs'/.test(src), `${file} must import ./lib/bd-cli.mjs`);
       assert.ok(!/^\s*(export\s+)?(async\s+)?function\s+(run)?[bB]d\s*\(/m.test(src), `${file} must not define its own bd()/runBd()`);
+      // ask-repos.mjs once spawned `execFileSync('bd', ...)` itself, beside the import.
+      assert.ok(!/\b(execFileSync|execFile|spawnSync|spawn)\(\s*['"]bd['"]/.test(src), `${file} must call bd through ./lib/bd-cli.mjs, not spawn it itself`);
     }
   });
 });
